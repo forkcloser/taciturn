@@ -1,11 +1,18 @@
 // Command taciturn is an ssh-agent for keys in the Mac's Secure Enclave,
-// and the command line that manages them. The scaffold names the binary
-// and its version stamp; the command arrives with its packages.
+// and the command line that manages them.
+//
+// Usage:
+//
+//	taciturn agent | install | uninstall | status | doctor | log
+//	taciturn key create|list|show|allow|disallow|sshsig|delete|rotate|retire|signers
+//
+// Everything but the exit lives in internal/cli.
 package main
 
 import (
-	"fmt"
 	"os"
+
+	"github.com/forkcloser/taciturn/internal/cli"
 )
 
 // version is stamped at build time via -X main.version: goreleaser injects
@@ -14,5 +21,5 @@ import (
 var version = "dev"
 
 func main() {
-	_, _ = fmt.Fprintln(os.Stdout, "taciturn "+version)
+	os.Exit(cli.Run(version, os.Args[1:], os.Stdout, os.Stderr))
 }

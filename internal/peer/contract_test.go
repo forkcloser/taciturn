@@ -142,10 +142,40 @@ func TestSatisfies(t *testing.T) {
 		t.Fatalf("garbage requirement: %v", err)
 	}
 
+	if _, err := identity.Satisfies("anchor \xff apple"); !errors.Is(err, peer.ErrInvalid) {
+		t.Fatalf("requirement that is not UTF-8: %v", err)
+	}
+
 	identity.Close()
 	identity.Close()
 
 	if _, err := identity.Satisfies("anchor apple"); !errors.Is(err, peer.ErrUnavailable) {
 		t.Fatalf("after close: %v", err)
+	}
+}
+
+// ValidRequirement answers from the parser alone: what Satisfies would
+// evaluate parses, what it reports ErrInvalid for does not.
+func TestValidRequirement(t *testing.T) {
+	t.Parallel()
+
+	for _, text := range []string{
+		"anchor apple",
+		`anchor apple and identifier "com.apple.ssh"`,
+		`identifier "org.forkcloser.ssh" and cdhash H"0123456789abcdef0123456789abcdef01234567"`,
+	} {
+		if err := peer.ValidRequirement(text); err != nil {
+			if errors.Is(err, peer.ErrUnavailable) {
+				t.Skip("built without the framework")
+			}
+
+			t.Fatalf("%q: %v", text, err)
+		}
+	}
+
+	for _, text := range []string{"", "this is not a requirement (((", `identifier`, "anchor apple and", "anchor \xff\xfe apple"} {
+		if err := peer.ValidRequirement(text); !errors.Is(err, peer.ErrInvalid) {
+			t.Fatalf("%q: %v", text, err)
+		}
 	}
 }

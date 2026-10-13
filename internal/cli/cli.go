@@ -167,6 +167,8 @@ func usage(w io.Writer) {
   taciturn key show NAME
   taciturn key allow NAME -user USER -host HOST -known-hosts FILE
   taciturn key disallow NAME -host HOST
+  taciturn key peers NAME [-add ENTRY] [-remove ENTRY]
+                                       who may ask: any, path=GLOB, or a code requirement
   taciturn key sshsig NAME -namespace NS [-remove]
   taciturn key delete NAME -yes
   taciturn key rotate NAME             a successor, served beside NAME@<date>

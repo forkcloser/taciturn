@@ -21,5 +21,11 @@ func (i *Identity) Satisfies(string) (bool, error) {
 	return false, fmt.Errorf("built without cgo on darwin: %w", ErrUnavailable)
 }
 
+// ValidRequirement is ErrUnavailable: nothing parses a requirement without
+// the framework.
+func ValidRequirement(string) error {
+	return fmt.Errorf("built without cgo on darwin: %w", ErrUnavailable)
+}
+
 // Close has nothing to release.
 func (i *Identity) Close() {}

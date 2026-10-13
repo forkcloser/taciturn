@@ -318,12 +318,18 @@ Per key, stored in its `.json`, set by the CLI:
   requirement language, checked on the connection's audit token, F9) or
   `path=<glob>`, the peer's executable path as `SecCodeCopyPath` reports it. The default,
   set at `key create`, names **forkcloser/openssh's `ssh` and `ssh-keygen` only**, by path
-  under aqua's package directory (the fork's binaries carry an ad-hoc signature, so a path
-  is what identifies them; the log records the cdhash of every peer, so the build that
-  asked is on record). Until the fork ships P-256, the default also carries Apple's
+  under every aqua root the machine runs tools from: the human's
+  (`~/.local/share/aquaproj-aqua`) and the sessions' (`~/.local/share/limen-agent/aqua`,
+  limen-install-agent's), so the environment that creates a key does not decide which
+  client may use it (the fork's binaries carry an ad-hoc signature, so a path is what
+  identifies them; the log records the cdhash of every peer, so the build that asked is
+  on record). Until the fork is the sessions' client, the default also carries Apple's
   `anchor apple and identifier "com.apple.ssh"` / `"com.apple.ssh-keygen"` as a named
-  interim allowance, removed in the release that follows the fork's. `--peers any` turns
-  the check off for a key. What the check is worth: it stops a client that speaks the
+  interim allowance, removed in the release that follows the switch. `--peers any` turns
+  the check off for a key; `key peers NAME --add/--remove` edits the list afterwards, and
+  every entry is checked as the agent reads it (a glob the matcher takes, a requirement
+  the framework parses), since the agent treats what it cannot read as unsatisfied and a
+  stored typo would refuse every request. What the check is worth: it stops a client that speaks the
   agent protocol itself; a process that drives ssh is caught by the destination policy,
   not by this.
 
@@ -422,6 +428,7 @@ taciturn key list [--format console|json|ssh]   ssh: authorized_keys lines, for 
 taciturn key show NAME                          public key, fingerprint, class, policy, last uses
 taciturn key allow NAME --user U --host H --known-hosts FILE
 taciturn key disallow NAME --host H
+taciturn key peers NAME [--add ENTRY] [--remove ENTRY]   who may ask; an entry is checked as the agent reads it
 taciturn key sshsig NAME --namespace git [--remove]
 taciturn key delete NAME --yes                  prints the reminder to revoke on GitHub
 taciturn key rotate NAME                        successor created and served; old key renamed NAME@<date>
@@ -615,8 +622,9 @@ Each was put as a question with the alternatives; the answer and its reason stan
    is locked, until reboot, so unattended sessions finish their pushes. Same exposure as
    while present, within the policy.
 3. **Peer requirement on by default, naming our ssh fork only** (path under aqua's
-   package directory), with Apple's `ssh`/`ssh-keygen` as a named interim allowance until
-   the fork ships P-256. The bot then has exactly one client. `--peers any` per key.
+   package directory, the human's root and the sessions'), with Apple's `ssh`/`ssh-keygen`
+   as a named interim allowance until the fork is the sessions' client (it ships P-256
+   since v10.6.1.2). The bot then has exactly one client. `--peers any` per key.
 4. **A user-authentication signature on an unbound connection is refused.** Only sshsig
    requests are answered unbound. Breaks no OpenSSH since 8.9; refuses every other client.
 5. **Own protocol loop**, not `x/crypto/ssh/agent.ServeAgent`: a 64 KiB bound, a

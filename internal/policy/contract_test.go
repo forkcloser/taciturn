@@ -56,6 +56,20 @@ func userauthFor(sid []byte, user, algorithm string, key []byte) []byte {
 	)
 }
 
+func hostboundFor(sid []byte, user, algorithm string, key, host []byte) []byte {
+	return cat(
+		str(sid),
+		[]byte{50},
+		str([]byte(user)),
+		str([]byte("ssh-connection")),
+		str([]byte("publickey-hostbound-v00@openssh.com")),
+		[]byte{1},
+		str([]byte(algorithm)),
+		str(key),
+		str(host),
+	)
+}
+
 func sshsigFor(namespace string) []byte {
 	return cat(
 		[]byte("SSHSIG"),
@@ -287,4 +301,34 @@ func TestPeerEntries(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A host-bound request is allowed when it names the bound host key, and
+// refused by its own rule when it names another: the session was proved to
+// one server and the request asks to authenticate to a different one.
+func TestHostboundRequestNamesTheBoundHost(t *testing.T) {
+	t.Parallel()
+
+	expect(
+		t,
+		policy.Sign(
+			bound(githubKey),
+			github(),
+			keyBlob,
+			hostboundFor(sessionID, "git", protocol.AlgorithmECDSAP256, keyBlob, githubKey),
+		),
+		true,
+		policy.RuleAllowedAuth,
+	)
+	expect(
+		t,
+		policy.Sign(
+			bound(githubKey),
+			github(),
+			keyBlob,
+			hostboundFor(sessionID, "git", protocol.AlgorithmECDSAP256, keyBlob, otherHostKey),
+		),
+		false,
+		policy.RuleHostKey,
+	)
 }

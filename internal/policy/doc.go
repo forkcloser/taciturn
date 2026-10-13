@@ -21,8 +21,9 @@
 //     destination of the policy carries the bound host key.
 //  4. On a connection bound for authentication, the data must be a
 //     public-key user-authentication request for this key, with the bound
-//     session identifier, for a user a destination with the bound host key
-//     allows; and the peer must be one the policy names.
+//     session identifier, naming the bound host key when it is host-bound,
+//     for a user a destination with the bound host key allows; and the
+//     peer must be one the policy names.
 //  5. On an unbound connection, the data must be an SSHSIG request in a
 //     namespace the policy allows; and the peer must be one the policy
 //     names. A user-authentication request on an unbound connection is

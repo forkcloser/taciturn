@@ -82,6 +82,7 @@ const (
 	RuleVisibleBound  = "a destination has the bound host key"
 	RuleNotUserauth   = "signed data is not a user-authentication request"
 	RuleSessionID     = "session identifier differs from the binding"
+	RuleHostKey       = "host key in the request differs from the binding"
 	RuleKeyMismatch   = "the request names another key"
 	RuleAlgorithm     = "the request names another algorithm"
 	RuleUser          = "no destination with the bound host key allows this user"
@@ -143,6 +144,13 @@ func signBound(conn Connection, pol Policy, keyBlob, data []byte) Decision {
 
 	if !bytes.Equal(req.SessionID, conn.SessionID) {
 		return refuse(RuleSessionID)
+	}
+
+	// A host-bound request names the server it is for; it must be the one
+	// the connection bound to, or the client is asking to authenticate to
+	// one server with a session it proved to another.
+	if req.HostKey != nil && !bytes.Equal(req.HostKey, conn.HostKey) {
+		return refuse(RuleHostKey)
 	}
 
 	if !bytes.Equal(req.KeyBlob, keyBlob) {

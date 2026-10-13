@@ -79,6 +79,17 @@ var (
 		str([]byte("ecdsa-sha2-nistp256")),
 		str(keyBlob),
 	)
+	hostbound = cat(
+		str(sessID),
+		[]byte{50},
+		str([]byte("git")),
+		str([]byte("ssh-connection")),
+		str([]byte("publickey-hostbound-v00@openssh.com")),
+		[]byte{1},
+		str([]byte("ecdsa-sha2-nistp256")),
+		str(keyBlob),
+		str(hostKey),
+	)
 	sshsig = cat(
 		[]byte("SSHSIG"),
 		str([]byte("git")),
@@ -274,7 +285,29 @@ func TestParseUserauthRequest(t *testing.T) {
 			str([]byte("ecdsa-sha2-nistp256")),
 			str(keyBlob),
 		),
-		"sshsig data": sshsig,
+		"host-bound with an empty host key": cat(
+			str(sessID),
+			[]byte{50},
+			str([]byte("git")),
+			str([]byte("ssh-connection")),
+			str([]byte("publickey-hostbound-v00@openssh.com")),
+			[]byte{1},
+			str([]byte("ecdsa-sha2-nistp256")),
+			str(keyBlob),
+			str(nil),
+		),
+		"host-bound without the host key": cat(
+			str(sessID),
+			[]byte{50},
+			str([]byte("git")),
+			str([]byte("ssh-connection")),
+			str([]byte("publickey-hostbound-v00@openssh.com")),
+			[]byte{1},
+			str([]byte("ecdsa-sha2-nistp256")),
+			str(keyBlob),
+		),
+		"plain method with a host key appended": cat(userauth, str(hostKey)),
+		"sshsig data":                           sshsig,
 	}
 
 	for name, data := range wrong {
@@ -453,4 +486,29 @@ func userauthWith(sid []byte, msg byte) []byte {
 		str([]byte("ecdsa-sha2-nistp256")),
 		str(keyBlob),
 	)
+}
+
+// The host-bound method carries the server's host key after the public
+// key and nothing else differs; the plain method carries no host key.
+func TestParseUserauthRequestHostbound(t *testing.T) {
+	t.Parallel()
+
+	req, err := protocol.ParseUserauthRequest(hostbound)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(req.SessionID, sessID) || req.User != "git" || req.PublicKeyAlgorithm != "ecdsa-sha2-nistp256" ||
+		!bytes.Equal(req.KeyBlob, keyBlob) || !bytes.Equal(req.HostKey, hostKey) {
+		t.Fatalf("%+v", req)
+	}
+
+	plain, err := protocol.ParseUserauthRequest(userauth)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if plain.HostKey != nil {
+		t.Fatalf("plain request carries a host key: %x", plain.HostKey)
+	}
 }

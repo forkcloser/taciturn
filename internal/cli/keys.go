@@ -708,6 +708,11 @@ func keyRotate(loc locations, args []string, stdout, stderr io.Writer) error {
 
 	successor.Predecessor = current.Fingerprint
 
+	// The successor takes the name, so the current key gives it up first;
+	// a store that then refuses the successor gets the current key back as
+	// it was, so a failed rotation leaves nothing renamed and nothing
+	// dangling.
+	before := current
 	current.Name = name + rotatedNameSep + successor.Created.Format(dateLayout)
 	current.Successor = successor.Fingerprint
 
@@ -716,6 +721,10 @@ func keyRotate(loc locations, args []string, stdout, stderr io.Writer) error {
 	}
 
 	if err = store.Create(successor, blob); err != nil {
+		if restore := store.Update(before); restore != nil {
+			return fmt.Errorf("%w; and %s stays renamed %s: %w", storeError(err), name, current.Name, restore)
+		}
+
 		return storeError(err)
 	}
 

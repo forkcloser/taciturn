@@ -20,22 +20,26 @@ var errNoHostKeys = errors.New("no host keys for the host in the known_hosts fil
 const signersTimeLayout = "20060102150405Z"
 
 // allowedSigner is the key's line for an allowed-signers file: the
-// principal, the git namespace, the validity window from the key's
-// creation to its retirement, and the key.
+// principal, one options field (the git namespace and the validity window
+// from the key's creation to its retirement, comma-separated, as
+// ssh-keygen reads it: a second space-separated field would be taken for
+// the key type), and the key.
 func allowedSigner(principal string, record keystore.Record) string {
-	parts := []string{
-		principal,
+	options := []string{
 		`namespaces="git"`,
 		`valid-after="` + record.Created.UTC().Format(signersTimeLayout) + `"`,
 	}
 
 	if record.Retired != nil {
-		parts = append(parts, `valid-before="`+record.Retired.UTC().Format(signersTimeLayout)+`"`)
+		options = append(options, `valid-before="`+record.Retired.UTC().Format(signersTimeLayout)+`"`)
 	}
 
-	parts = append(parts, protocol.AlgorithmECDSAP256, base64.StdEncoding.EncodeToString(record.PublicKey))
-
-	return strings.Join(parts, " ")
+	return strings.Join([]string{
+		principal,
+		strings.Join(options, ","),
+		protocol.AlgorithmECDSAP256,
+		base64.StdEncoding.EncodeToString(record.PublicKey),
+	}, " ")
 }
 
 // hostKeysFrom reads the host's keys out of a known_hosts file: every

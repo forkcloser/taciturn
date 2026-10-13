@@ -95,3 +95,52 @@ func TestParseStatus(t *testing.T) {
 		t.Fatalf("%+v", empty)
 	}
 }
+
+// launchctl print nests blocks under the service, each with "state"
+// lines of its own (endpoints are "active"); only the service's own line,
+// one tab in, says whether it runs. This is the shape the first install
+// printed while the status command said "not running".
+func TestParseStatusIgnoresNestedBlocks(t *testing.T) {
+	t.Parallel()
+
+	status := launchd.ParseStatus("gui/501/org.forkcloser.taciturn = {\n" +
+		"\tactive count = 1\n" +
+		"\tpath = /Users/me/Library/LaunchAgents/org.forkcloser.taciturn.plist\n" +
+		"\tstate = running\n" +
+		"\n" +
+		"\tprogram = /opt/taciturn/bin/taciturn\n" +
+		"\targuments = {\n" +
+		"\t\t/opt/taciturn/bin/taciturn\n" +
+		"\t\tagent\n" +
+		"\t}\n" +
+		"\n" +
+		"\tpid = 21791\n" +
+		"\tendpoints = {\n" +
+		"\t\t\"org.forkcloser.taciturn\" = {\n" +
+		"\t\t\tport = 0x1234\n" +
+		"\t\t\tactive = 0\n" +
+		"\t\t\tstate = active\n" +
+		"\t\t}\n" +
+		"\t}\n" +
+		"\n" +
+		"\tevent triggers = {\n" +
+		"\t\tstate = active\n" +
+		"\t}\n" +
+		"}\n")
+
+	if !status.Loaded || !status.Running || status.PID != 21791 || status.Program != "/opt/taciturn/bin/taciturn" {
+		t.Fatalf("%+v", status)
+	}
+
+	stopped := launchd.ParseStatus("gui/501/org.forkcloser.taciturn = {\n" +
+		"\tstate = not running\n" +
+		"\tendpoints = {\n" +
+		"\t\t\"org.forkcloser.taciturn\" = {\n" +
+		"\t\t\tstate = running\n" +
+		"\t\t}\n" +
+		"\t}\n" +
+		"}\n")
+	if !stopped.Loaded || stopped.Running || stopped.PID != 0 {
+		t.Fatalf("%+v", stopped)
+	}
+}

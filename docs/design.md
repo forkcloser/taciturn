@@ -170,7 +170,7 @@ package's hardware tests generated, reloaded across two processes and signed wit
   can parse the user out and check the session id against the binding
   (`ssh-agent.c`, `parse_userauth_request`, `process_sign_request2`). When the server
   advertises `publickey-hostbound@openssh.com` (GitHub does), the client signs the
-  host-bound form instead (OpenSSH PROTOCOL section 3.8): the method is
+  host-bound form instead (OpenSSH PROTOCOL section 3.1, "Host-bound public key authentication"): the method is
   `publickey-hostbound-v00@openssh.com` and the server's host key follows the public
   key, so the signer sees the server too; the agent checks it against the binding.
   Verified the hard way: v0.1.0 accepted only the plain method and refused every push

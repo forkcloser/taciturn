@@ -156,10 +156,18 @@ func ReadStatus(ctx context.Context) (Status, error) {
 
 // ParseStatus reads launchctl print's output for the fields the status
 // reports: a loaded service, whether it is running, its pid and program.
+// Only the service's own lines count, one tab in: the blocks nested under
+// it (endpoints, event triggers, the spawn constraints) carry their own
+// "state = active" lines, which once read as a service that was not
+// running while launchd had it running under a pid.
 func ParseStatus(text string) Status {
 	status := Status{Loaded: true}
 
 	for line := range strings.SplitSeq(text, "\n") {
+		if !strings.HasPrefix(line, "\t") || strings.HasPrefix(line, "\t\t") {
+			continue
+		}
+
 		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
 		if !found {
 			continue

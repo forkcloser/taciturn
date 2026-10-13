@@ -233,7 +233,7 @@ func TestSignersRetireDelete(t *testing.T) {
 	store, record := seed(t, "bot")
 
 	code, out, _ := run(t, "key", "signers", "bot", "-store", store, "-principal", "bot@example.com")
-	want := `bot@example.com namespaces="git" valid-after="20261012163000Z" ` + protocol.AlgorithmECDSAP256 + " " + base64.StdEncoding.EncodeToString(
+	want := `bot@example.com namespaces="git",valid-after="20261012163000Z" ` + protocol.AlgorithmECDSAP256 + " " + base64.StdEncoding.EncodeToString(
 		record.PublicKey,
 	) + "\n"
 
@@ -247,7 +247,7 @@ func TestSignersRetireDelete(t *testing.T) {
 	}
 
 	code, out, _ = run(t, "key", "signers", "bot", "-store", store, "-principal", "bot@example.com")
-	if code != 0 || !strings.Contains(out, `valid-before="`) {
+	if code != 0 || !strings.Contains(out, `",valid-before="`) {
 		t.Fatalf("signers after retire: %s", out)
 	}
 

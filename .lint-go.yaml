@@ -1,0 +1,31 @@
+# This project's carve-outs from the Go lint baseline (.limen/lint-go.yaml):
+# the baseline's sections, in its shape, holding only what this project adds,
+# changes or takes out. `just do lint go` renders the two on every run
+# (book/linting-go.md, "one baseline, per-project carve-outs").
+golangci:
+  linters:
+    exclusions:
+      rules:
+        # Tests are black-box consumers: the rules about API hygiene and
+        # production robustness do not apply to them, the rules about
+        # correctness do (errcheck stays on: a test that ignores an error can
+        # pass for the wrong reason).
+        - path: _test\.go
+          linters:
+            - dupl # test cases are meant to look alike
+            - dupword # test data
+            - err113 # dynamic errors are fine in fixtures
+            - dogsled # multiple-return helpers are exercised for one value at a time
+            - noctx # no cancellation to propagate
+            - perfsprint # readability over allocations
+            - mnd # fixture values
+            - gochecknoglobals # the wire fixtures every test starts from, built once by hand
+    settings:
+      depguard:
+        rules:
+          main:
+            allow:
+              # The dependencies docs/design.md names, and no other.
+              - github.com/mycophonic/primordium
+              - golang.org/x/crypto
+              - golang.org/x/sys

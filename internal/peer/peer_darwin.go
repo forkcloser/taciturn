@@ -74,9 +74,13 @@ static void taciturn_code_info(SecCodeRef code, char *identifier, size_t id_leng
 }
 
 // taciturn_code_satisfies evaluates a requirement against the code:
-// 1 satisfied, 0 not, -1 the requirement does not parse.
+// 1 satisfied, 0 not, -1 the requirement does not parse. A C string
+// that is not UTF-8 makes no CFString, and is no requirement either.
 static int taciturn_code_satisfies(SecCodeRef code, const char *requirement) {
 	CFStringRef text = CFStringCreateWithCString(NULL, requirement, kCFStringEncodingUTF8);
+	if (text == NULL) {
+		return -1;
+	}
 	SecRequirementRef req = NULL;
 	OSStatus status = SecRequirementCreateWithString(text, kSecCSDefaultFlags, &req);
 	CFRelease(text);
@@ -86,6 +90,24 @@ static int taciturn_code_satisfies(SecCodeRef code, const char *requirement) {
 	status = SecCodeCheckValidity(code, kSecCSDefaultFlags, req);
 	CFRelease(req);
 	return status == errSecSuccess;
+}
+
+// taciturn_requirement_parses says whether the framework reads the text as
+// a requirement: 1 yes, 0 no. No code is involved. Bytes that are not UTF-8
+// make no CFString, and are no requirement.
+static int taciturn_requirement_parses(const char *requirement) {
+	CFStringRef text = CFStringCreateWithCString(NULL, requirement, kCFStringEncodingUTF8);
+	if (text == NULL) {
+		return 0;
+	}
+	SecRequirementRef req = NULL;
+	OSStatus status = SecRequirementCreateWithString(text, kSecCSDefaultFlags, &req);
+	CFRelease(text);
+	if (status != errSecSuccess || req == NULL) {
+		return 0;
+	}
+	CFRelease(req);
+	return 1;
 }
 
 static int taciturn_pid_path(int pid, char *buf, size_t length) {
@@ -251,6 +273,21 @@ func (i *Identity) Satisfies(requirement string) (bool, error) {
 	default:
 		return false, fmt.Errorf("requirement %q: %w", requirement, ErrInvalid)
 	}
+}
+
+// ValidRequirement says whether the framework parses the text as a code
+// requirement, without any code to evaluate it on: ErrInvalid when it does
+// not. The agent treats an unparsable entry as unsatisfied, so this is
+// what lets a policy edit refuse a typo instead of storing it.
+func ValidRequirement(requirement string) error {
+	text := C.CString(requirement)
+	defer C.free(unsafe.Pointer(text))
+
+	if C.taciturn_requirement_parses(text) != 1 {
+		return fmt.Errorf("requirement %q: %w", requirement, ErrInvalid)
+	}
+
+	return nil
 }
 
 // Close releases the framework's reference. Closing twice is harmless.

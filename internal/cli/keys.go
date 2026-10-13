@@ -16,16 +16,19 @@ import (
 
 	"github.com/forkcloser/taciturn/internal/enclave"
 	"github.com/forkcloser/taciturn/internal/keystore"
+	"github.com/forkcloser/taciturn/internal/peer"
 	"github.com/forkcloser/taciturn/internal/policy"
 	"github.com/forkcloser/taciturn/internal/protocol"
 )
 
 var (
-	errName     = errors.New("a key name is required")
-	errClass    = errors.New("-use must be locked or unlocked")
-	errConfirm  = errors.New("deletion needs -yes")
-	errRetired  = errors.New("key is retired")
-	errArgument = errors.New("missing argument")
+	errName      = errors.New("a key name is required")
+	errClass     = errors.New("-use must be locked or unlocked")
+	errConfirm   = errors.New("deletion needs -yes")
+	errRetired   = errors.New("key is retired")
+	errArgument  = errors.New("missing argument")
+	errPeerFlags = errors.New("-add and -remove are exclusive")
+	errPeerEntry = errors.New("invalid peer entry")
 )
 
 // The access classes as the command line names them.
@@ -35,30 +38,48 @@ const (
 )
 
 // The peers a new key allows by default: forkcloser/openssh's ssh and
-// ssh-keygen by path under aqua's package directory, and, until the fork
-// ships P-256, Apple's (docs/design.md, decision 3).
+// ssh-keygen by path under every aqua root this machine runs tools from,
+// and, until the fork is the sessions' client, Apple's (docs/design.md,
+// decision 3). The fork's package directory is one version component
+// (vX.Y.Z or vX.Y.Z.N), the archive, the archive's directory, then bin.
 const (
-	forkPackages    = "pkgs/github_release/github.com/forkcloser/openssh/*/*/*/bin/"
-	appleSSH        = `anchor apple and identifier "com.apple.ssh"`
-	appleSSHKeygen  = `anchor apple and identifier "com.apple.ssh-keygen"`
-	defaultAquaRoot = ".local/share/aquaproj-aqua"
-	dateLayout      = "20060102"
-	rotatedNameSep  = "@"
-	formatSSH       = "ssh"
+	forkPackages   = "pkgs/github_release/github.com/forkcloser/openssh/*/*/*/bin/"
+	appleSSH       = `anchor apple and identifier "com.apple.ssh"`
+	appleSSHKeygen = `anchor apple and identifier "com.apple.ssh-keygen"`
+	humanAquaRoot  = ".local/share/aquaproj-aqua"
+	agentAquaRoot  = ".local/share/limen-agent/aqua"
+	dateLayout     = "20060102"
+	rotatedNameSep = "@"
+	formatSSH      = "ssh"
 )
 
-func defaultPeers() []string {
-	root := os.Getenv("AQUA_ROOT_DIR")
-	if root == "" {
-		root = filepath.Join(dirs.HomeDir(), defaultAquaRoot)
+// aquaRoots are the roots the fork may run from: the human's and the
+// sessions' (limen-install-agent's, under its agent root), whichever this
+// process was started under first, so that the environment that creates a
+// key does not decide which client may use it.
+func aquaRoots() []string {
+	home := dirs.HomeDir()
+	roots := []string{filepath.Join(home, humanAquaRoot), filepath.Join(home, agentAquaRoot)}
+
+	if root := os.Getenv("AQUA_ROOT_DIR"); root != "" && !slices.Contains(roots, root) {
+		roots = append([]string{root}, roots...)
 	}
 
-	return []string{
-		policy.PeerPathPrefix + filepath.Join(root, forkPackages, "ssh"),
-		policy.PeerPathPrefix + filepath.Join(root, forkPackages, "ssh-keygen"),
-		appleSSH,
-		appleSSHKeygen,
+	return roots
+}
+
+func defaultPeers() []string {
+	var peers []string
+
+	for _, root := range aquaRoots() {
+		peers = append(
+			peers,
+			policy.PeerPathPrefix+filepath.Join(root, forkPackages, "ssh"),
+			policy.PeerPathPrefix+filepath.Join(root, forkPackages, "ssh-keygen"),
+		)
 	}
+
+	return append(peers, appleSSH, appleSSHKeygen)
 }
 
 func runKey(args []string, stdout, stderr io.Writer) error {
@@ -84,6 +105,8 @@ func runKey(args []string, stdout, stderr io.Writer) error {
 		return keyAllow(loc, args[1:], stdout, stderr)
 	case "disallow":
 		return keyDisallow(loc, args[1:], stdout, stderr)
+	case "peers":
+		return keyPeers(loc, args[1:], stdout, stderr)
 	case "sshsig":
 		return keySSHSig(loc, args[1:], stdout, stderr)
 	case "delete":
@@ -129,7 +152,11 @@ func keyCreate(loc locations, args []string, stdout, stderr io.Writer) error {
 		"",
 		"locked: signs while the screen is locked, until reboot; unlocked: only while the session is unlocked",
 	)
-	peers := set.String("peers", "", "\"any\" to let every process ask; default: our ssh and Apple's")
+	peers := set.String(
+		"peers",
+		"",
+		"who may ask, comma-separated: any, path=GLOB, or a code requirement; default: our ssh and Apple's",
+	)
 
 	if err = parse(set, rest); err != nil {
 		return err
@@ -144,16 +171,20 @@ func keyCreate(loc locations, args []string, stdout, stderr io.Writer) error {
 		return storeError(err)
 	}
 
+	allowed := defaultPeers()
+	if *peers != "" {
+		allowed = strings.Split(*peers, ",")
+	}
+
+	for _, entry := range allowed {
+		if err = validPeer(entry); err != nil {
+			return err
+		}
+	}
+
 	store, err := openStore(*storePath)
 	if err != nil {
 		return err
-	}
-
-	allowed := defaultPeers()
-	if *peers == policy.PeerAny {
-		allowed = []string{policy.PeerAny}
-	} else if *peers != "" {
-		allowed = strings.Split(*peers, ",")
 	}
 
 	record, blob, err := generate(name, class, enclaveClass, policy.Policy{Peers: allowed})
@@ -463,6 +494,95 @@ func keyDisallow(loc locations, args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// validPeer checks a peer entry the way the agent will read it: "any", a
+// path glob the matcher accepts, or a code requirement the framework
+// parses. The agent treats what it cannot read as unsatisfied, so an entry
+// refused here would have refused every request instead.
+func validPeer(entry string) error {
+	switch {
+	case entry == policy.PeerAny:
+		return nil
+	case strings.HasPrefix(entry, policy.PeerPathPrefix):
+		pattern := strings.TrimPrefix(entry, policy.PeerPathPrefix)
+		if !filepath.IsAbs(pattern) {
+			return fmt.Errorf("%w: %q: the path is not absolute", errPeerEntry, entry)
+		}
+
+		if _, err := filepath.Match(pattern, ""); err != nil {
+			return fmt.Errorf("%w: %q: %w", errPeerEntry, entry, err)
+		}
+
+		return nil
+	case entry == "":
+		return fmt.Errorf("%w: empty", errPeerEntry)
+	default:
+		if err := peer.ValidRequirement(entry); err != nil {
+			return fmt.Errorf("%w: %w", errPeerEntry, err)
+		}
+
+		return nil
+	}
+}
+
+// keyPeers edits who may ask a key to sign: one entry added or removed per
+// call, the list printed after.
+func keyPeers(loc locations, args []string, stdout, stderr io.Writer) error {
+	name, rest, err := nameAndFlags(args)
+	if err != nil {
+		return err
+	}
+
+	set := flagSet("key peers", stderr)
+	storePath := storeFlag(set, loc)
+	add := set.String("add", "", "an entry to allow: any, path=GLOB, or a code requirement")
+	remove := set.String("remove", "", "an entry to take away, as show prints it")
+
+	if err = parse(set, rest); err != nil {
+		return err
+	}
+
+	if *add != "" && *remove != "" {
+		return errPeerFlags
+	}
+
+	if *add != "" {
+		if err = validPeer(*add); err != nil {
+			return err
+		}
+	}
+
+	store, err := openStore(*storePath)
+	if err != nil {
+		return err
+	}
+
+	record, err := update(store, name, func(record *keystore.Record) error {
+		if *remove != "" {
+			record.Policy.Peers = slices.DeleteFunc(
+				slices.Clone(record.Policy.Peers),
+				func(entry string) bool { return entry == *remove },
+			)
+		}
+
+		if *add != "" && !slices.Contains(record.Policy.Peers, *add) {
+			record.Policy.Peers = append(slices.Clone(record.Policy.Peers), *add)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(stdout, "%s may be asked by %d peers:\n", record.Name, len(record.Policy.Peers))
+
+	for _, entry := range record.Policy.Peers {
+		_, _ = fmt.Fprintf(stdout, "  %s\n", entry)
+	}
+
+	return nil
+}
+
 func keySSHSig(loc locations, args []string, stdout, stderr io.Writer) error {
 	name, rest, err := nameAndFlags(args)
 	if err != nil {
@@ -588,6 +708,11 @@ func keyRotate(loc locations, args []string, stdout, stderr io.Writer) error {
 
 	successor.Predecessor = current.Fingerprint
 
+	// The successor takes the name, so the current key gives it up first;
+	// a store that then refuses the successor gets the current key back as
+	// it was, so a failed rotation leaves nothing renamed and nothing
+	// dangling.
+	before := current
 	current.Name = name + rotatedNameSep + successor.Created.Format(dateLayout)
 	current.Successor = successor.Fingerprint
 
@@ -596,6 +721,10 @@ func keyRotate(loc locations, args []string, stdout, stderr io.Writer) error {
 	}
 
 	if err = store.Create(successor, blob); err != nil {
+		if restore := store.Update(before); restore != nil {
+			return fmt.Errorf("%w; and %s stays renamed %s: %w", storeError(err), name, current.Name, restore)
+		}
+
 		return storeError(err)
 	}
 

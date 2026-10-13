@@ -344,3 +344,64 @@ not json at all
 		t.Fatalf("missing log: exit %d: %s", code, errOut)
 	}
 }
+
+// The peers of a key are edited one entry at a time, each checked as the
+// agent will read it: a relative or malformed path glob and a requirement
+// the framework does not parse are refused before anything is stored.
+func TestPeers(t *testing.T) {
+	t.Parallel()
+
+	store, _ := seed(t, "deploy")
+	requirement := `anchor apple and identifier "com.apple.ssh"`
+
+	code, out, errOut := run(t, "key", "peers", "deploy", "-store", store, "-add", requirement)
+	if code != 0 && strings.Contains(errOut, "unavailable") {
+		t.Skip("built without the framework: requirements cannot be checked here")
+	}
+
+	if code != 0 || !strings.Contains(out, "2 peers") || !strings.Contains(out, requirement) {
+		t.Fatalf("add requirement: exit %d: %s %s", code, out, errOut)
+	}
+
+	code, out, _ = run(t, "key", "peers", "deploy", "-store", store, "-add", "path=/opt/ssh/*/bin/ssh")
+	if code != 0 || !strings.Contains(out, "3 peers") {
+		t.Fatalf("add path: exit %d: %s", code, out)
+	}
+
+	code, out, _ = run(t, "key", "peers", "deploy", "-store", store, "-add", "path=/opt/ssh/*/bin/ssh")
+	if code != 0 || !strings.Contains(out, "3 peers") {
+		t.Fatalf("add path twice: exit %d: %s", code, out)
+	}
+
+	for _, bad := range []string{"path=relative/ssh", "path=/opt/[", `anchor apple and identifier`, "anchor \xff apple"} {
+		code, _, errOut = run(t, "key", "peers", "deploy", "-store", store, "-add", bad)
+		if code != 1 || !strings.Contains(errOut, "invalid peer entry") {
+			t.Fatalf("add %q: exit %d: %s", bad, code, errOut)
+		}
+	}
+
+	code, _, errOut = run(t, "key", "peers", "deploy", "-store", store, "-add", "any", "-remove", "any")
+	if code != 1 || !strings.Contains(errOut, "exclusive") {
+		t.Fatalf("add and remove: exit %d: %s", code, errOut)
+	}
+
+	code, out, _ = run(t, "key", "peers", "deploy", "-store", store, "-remove", "any")
+	if code != 0 || !strings.Contains(out, "2 peers") || strings.Contains(out, "  any\n") {
+		t.Fatalf("remove: exit %d: %s", code, out)
+	}
+
+	code, out, _ = run(t, "key", "show", "deploy", "-store", store, "-format", "json")
+	if code != 0 || !strings.Contains(out, "/opt/ssh/*/bin/ssh") || !strings.Contains(out, "com.apple.ssh") {
+		t.Fatalf("show after peers: %s", out)
+	}
+
+	code, out, _ = run(t, "key", "peers", "deploy", "-store", store)
+	if code != 0 || !strings.Contains(out, "2 peers") {
+		t.Fatalf("peers alone lists: exit %d: %s", code, out)
+	}
+
+	code, _, errOut = run(t, "key", "create", "bot2", "-store", store, "-use", "locked", "-peers", "any,")
+	if code != 1 || !strings.Contains(errOut, "invalid peer entry") {
+		t.Fatalf("create with a bad peer: exit %d: %s", code, errOut)
+	}
+}

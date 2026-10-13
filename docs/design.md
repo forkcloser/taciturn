@@ -504,7 +504,13 @@ bounded walk, a fuzz target, black-box.
   IdentityAgent=` against a local `sshd` (the fork's `sshd` with a test config that accepts
   `ecdsa-sha2-nistp256`), a destination that is allowed and one that is not, a forwarded
   agent over that connection refused, `ssh-keygen -Y sign` and `-Y verify` in an allowed
-  and a refused namespace, `ssh-add -L` listing, and `ssh-add` refused.
+  and a refused namespace, `ssh-add -L` listing, and `ssh-add` refused. *(Done 2026-10-12,
+  on this machine, with the real clients: a key made by `taciturn key create`, listed by
+  Apple's `ssh-add -L`, signed for by `ssh-keygen -Y sign -n git` and verified by
+  `ssh-keygen -Y verify`, the `file` namespace refused, `ssh-add` of a key refused, and a
+  real `ssh -T git@github.com` whose session binding verified against GitHub's ed25519
+  host key before GitHub refused the unregistered key; the audit log recorded each. The
+  local-`sshd` leg is still to run once the fork accepts P-256.)*
 - The locked-screen claim (F7): a manual procedure in the README, run once at
   implementation and at every macOS major: start a signature in 30 s, lock the screen,
   read the result.

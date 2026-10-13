@@ -168,7 +168,13 @@ package's hardware tests generated, reloaded across two processes and signed wit
 - A public-key userauth signature request signs `session_id ‖ SSH_MSG_USERAUTH_REQUEST ‖
   user ‖ "ssh-connection" ‖ "publickey" ‖ true ‖ pkalg ‖ pubkey` (RFC 4252): the agent
   can parse the user out and check the session id against the binding
-  (`ssh-agent.c`, `parse_userauth_request`, `process_sign_request2`).
+  (`ssh-agent.c`, `parse_userauth_request`, `process_sign_request2`). When the server
+  advertises `publickey-hostbound@openssh.com` (GitHub does), the client signs the
+  host-bound form instead (OpenSSH PROTOCOL section 3.8): the method is
+  `publickey-hostbound-v00@openssh.com` and the server's host key follows the public
+  key, so the signer sees the server too; the agent checks it against the binding.
+  Verified the hard way: v0.1.0 accepted only the plain method and refused every push
+  to GitHub while signing commits fine.
 - An `ssh-keygen -Y sign` request signs a blob that starts with `SSHSIG` and carries the
   namespace (`ssh-agent.c`, `parse_sshsig_request`).
 - OpenSSH's own agent implements per-key destination constraints over these
@@ -348,7 +354,8 @@ The agent's decision, per connection, in order; the first rule that applies ends
    a forwarding binding. Hiding a key from `ssh` is what stops it offering the key at the
    wrong host, exactly as OpenSSH does.
 4. `sign request`, connection bound for authentication → the data must parse as a userauth
-   request whose session id equals the bound one and whose public key is the requested
+   request (plain or host-bound) whose session id equals the bound one, whose host key,
+   when it carries one, equals the bound host key, and whose public key is the requested
    key, the user must match a destination whose host keys include the bound host key, the
    peer must satisfy `peers`. Then sign.
 5. `sign request`, connection unbound → the data must parse as an `SSHSIG` request with a

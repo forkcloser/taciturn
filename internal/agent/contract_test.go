@@ -119,6 +119,22 @@ func userauth(sid []byte, user string, keyBlob []byte) []byte {
 	}{sid, 50, user, "ssh-connection", "publickey", true, protocol.AlgorithmECDSAP256, keyBlob})
 }
 
+// hostbound is the userauth data in OpenSSH's host-bound form: the method
+// renamed and the server's host key after the public key.
+func hostbound(sid []byte, user string, keyBlob, hostBlob []byte) []byte {
+	return ssh.Marshal(struct {
+		SessionID []byte
+		Type      byte
+		User      string
+		Service   string
+		Method    string
+		Sig       bool
+		Algorithm string
+		Key       []byte
+		Host      []byte
+	}{sid, 50, user, "ssh-connection", "publickey-hostbound-v00@openssh.com", true, protocol.AlgorithmECDSAP256, keyBlob, hostBlob})
+}
+
 func sshsig(namespace string) []byte {
 	return append([]byte("SSHSIG"), ssh.Marshal(struct {
 		Namespace string
@@ -490,6 +506,11 @@ func TestSignatureRefusals(t *testing.T) {
 			userauth(sessionID(), "root", record.PublicKey),
 		},
 		"sshsig on a bound connection": {h.bind(t, sessionID(), false), key, sshsig("git")},
+		"host-bound to another host": {
+			h.bind(t, sessionID(), false),
+			key,
+			hostbound(sessionID(), "git", record.PublicKey, newHost(t).blob),
+		},
 		"forwarded": {
 			h.bind(t, sessionID(), true),
 			key,

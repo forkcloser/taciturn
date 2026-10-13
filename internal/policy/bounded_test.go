@@ -1,6 +1,7 @@
 package policy_test
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/forkcloser/taciturn/internal/policy"
@@ -19,6 +20,9 @@ type dims struct {
 	// For a userauth request: do its fields agree with the binding and the
 	// policy? For an sshsig request: is its namespace allowed?
 	sessionMatch, keyMatch, algorithmMatch, userMatch, namespaceMatch bool
+	// For a userauth request: is it host-bound, and does the host key it
+	// names agree with the binding?
+	hostbound, hostKeyMatch bool
 	// Does a destination of the policy carry the bound host key? Does the
 	// policy allow anything? Is the peer named?
 	hostKnown, policyEmpty, peerAllowed bool
@@ -42,6 +46,8 @@ func (d dims) expectedSign() policy.Decision {
 			return policy.Decision{Rule: policy.RuleNotUserauth}
 		case !d.sessionMatch:
 			return policy.Decision{Rule: policy.RuleSessionID}
+		case d.hostbound && !d.hostKeyMatch:
+			return policy.Decision{Rule: policy.RuleHostKey}
 		case !d.keyMatch:
 			return policy.Decision{Rule: policy.RuleKeyMismatch}
 		case !d.algorithmMatch:
@@ -131,6 +137,18 @@ func (d dims) realise() (policy.Connection, policy.Policy, []byte) {
 		}
 
 		data = userauthFor(sid, user, alg, key)
+
+		if d.hostbound {
+			host := conn.HostKey
+			if !d.hostKeyMatch {
+				host = otherHostKey
+				if bytes.Equal(conn.HostKey, otherHostKey) {
+					host = githubKey
+				}
+			}
+
+			data = hostboundFor(sid, user, alg, key, host)
+		}
 	case kindSSHSig:
 		ns := "git"
 		if !d.namespaceMatch {
@@ -164,39 +182,45 @@ func TestEveryCombinationOfTheTable(t *testing.T) {
 										for _, host := range bools {
 											for _, empty := range bools {
 												for _, peer := range bools {
-													d := dims{
-														bound,
-														forwarding,
-														refused,
-														kind,
-														session,
-														key,
-														alg,
-														user,
-														ns,
-														host,
-														empty,
-														peer,
-													}
-													conn, pol, data := d.realise()
+													for _, hb := range bools {
+														for _, hk := range bools {
+															d := dims{
+																bound,
+																forwarding,
+																refused,
+																kind,
+																session,
+																key,
+																alg,
+																user,
+																ns,
+																hb,
+																hk,
+																host,
+																empty,
+																peer,
+															}
+															conn, pol, data := d.realise()
 
-													if got, want := policy.Sign(
-														conn,
-														pol,
-														keyBlob,
-														data,
-													), d.expectedSign(); got != want {
-														t.Fatalf("%+v: Sign got %+v want %+v", d, got, want)
-													}
+															if got, want := policy.Sign(
+																conn,
+																pol,
+																keyBlob,
+																data,
+															), d.expectedSign(); got != want {
+																t.Fatalf("%+v: Sign got %+v want %+v", d, got, want)
+															}
 
-													if got, want := policy.Visible(
-														conn,
-														pol,
-													), d.expectedVisible(); got != want {
-														t.Fatalf("%+v: Visible got %+v want %+v", d, got, want)
-													}
+															if got, want := policy.Visible(
+																conn,
+																pol,
+															), d.expectedVisible(); got != want {
+																t.Fatalf("%+v: Visible got %+v want %+v", d, got, want)
+															}
 
-													count++
+															count++
+														}
+													}
 												}
 											}
 										}
@@ -210,7 +234,7 @@ func TestEveryCombinationOfTheTable(t *testing.T) {
 		}
 	}
 
-	if count != 2*2*2*3*2*2*2*2*2*2*2*2 {
+	if count != 2*2*2*3*2*2*2*2*2*2*2*2*2*2 {
 		t.Fatalf("walked %d combinations", count)
 	}
 }

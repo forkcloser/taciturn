@@ -5,11 +5,16 @@ import (
 )
 
 // The constants a public-key user-authentication request carries, RFC 4252
-// section 7: the message number, the service and the method.
+// section 7: the message number, the service and the method; and OpenSSH's
+// host-bound method (PROTOCOL, "publickey-hostbound-v00@openssh.com"),
+// which a client uses when the server advertises it, GitHub among them:
+// the same message with the server's host key appended, so the signer sees
+// the server the signature is for.
 const (
-	msgUserauthRequest   = 50
-	userauthService      = "ssh-connection"
-	userauthMethodPubkey = "publickey"
+	msgUserauthRequest      = 50
+	userauthService         = "ssh-connection"
+	userauthMethodPubkey    = "publickey"
+	userauthMethodHostbound = "publickey-hostbound-v00@openssh.com"
 )
 
 // UserauthRequest is the data a client asks to have signed for public-key
@@ -17,17 +22,21 @@ const (
 // connection, then the SSH_MSG_USERAUTH_REQUEST it will send. The session
 // identifier is what ties the signature to one server; the user is who the
 // client claims to be there; the key blob is the key it will present.
+// HostKey is the server's host key when the request is host-bound, and nil
+// for the plain publickey method.
 type UserauthRequest struct {
 	SessionID          []byte
 	User               string
 	PublicKeyAlgorithm string
 	KeyBlob            []byte
+	HostKey            []byte
 }
 
 // ParseUserauthRequest decodes signed data as a user-authentication request.
 // Data of any other shape, a wrong message number, a service other than
-// ssh-connection, a method other than publickey, a signature flag that is
-// not set, an empty session identifier, is ErrInvalid.
+// ssh-connection, a method other than publickey or its host-bound form, a
+// signature flag that is not set, an empty session identifier, a host-bound
+// request with an empty host key, is ErrInvalid.
 func ParseUserauthRequest(data []byte) (UserauthRequest, error) {
 	input := newReader(data)
 
@@ -54,31 +63,9 @@ func ParseUserauthRequest(data []byte) (UserauthRequest, error) {
 		return UserauthRequest{}, fmt.Errorf("userauth user: %w", err)
 	}
 
-	service, err := input.string()
+	method, err := userauthMethod(input)
 	if err != nil {
-		return UserauthRequest{}, fmt.Errorf("userauth service: %w", err)
-	}
-
-	if service != userauthService {
-		return UserauthRequest{}, fmt.Errorf("userauth service %q: %w", service, ErrInvalid)
-	}
-
-	method, err := input.string()
-	if err != nil {
-		return UserauthRequest{}, fmt.Errorf("userauth method: %w", err)
-	}
-
-	if method != userauthMethodPubkey {
-		return UserauthRequest{}, fmt.Errorf("userauth method %q: %w", method, ErrInvalid)
-	}
-
-	signatureFollows, err := input.bool()
-	if err != nil {
-		return UserauthRequest{}, fmt.Errorf("userauth signature flag: %w", err)
-	}
-
-	if !signatureFollows {
-		return UserauthRequest{}, fmt.Errorf("userauth request without a signature: %w", ErrInvalid)
+		return UserauthRequest{}, err
 	}
 
 	algorithm, err := input.string()
@@ -91,11 +78,75 @@ func ParseUserauthRequest(data []byte) (UserauthRequest, error) {
 		return UserauthRequest{}, fmt.Errorf("userauth key: %w", err)
 	}
 
+	hostKey, err := userauthHostKey(input, method)
+	if err != nil {
+		return UserauthRequest{}, err
+	}
+
 	if err := input.done(); err != nil {
 		return UserauthRequest{}, fmt.Errorf("userauth request: %w", err)
 	}
 
-	return UserauthRequest{SessionID: sessionID, User: user, PublicKeyAlgorithm: algorithm, KeyBlob: keyBlob}, nil
+	return UserauthRequest{
+		SessionID:          sessionID,
+		User:               user,
+		PublicKeyAlgorithm: algorithm,
+		KeyBlob:            keyBlob,
+		HostKey:            hostKey,
+	}, nil
+}
+
+// userauthMethod reads the service, the method and the signature flag,
+// and says which of the two public-key methods the request uses.
+func userauthMethod(input *reader) (string, error) {
+	service, err := input.string()
+	if err != nil {
+		return "", fmt.Errorf("userauth service: %w", err)
+	}
+
+	if service != userauthService {
+		return "", fmt.Errorf("userauth service %q: %w", service, ErrInvalid)
+	}
+
+	method, err := input.string()
+	if err != nil {
+		return "", fmt.Errorf("userauth method: %w", err)
+	}
+
+	if method != userauthMethodPubkey && method != userauthMethodHostbound {
+		return "", fmt.Errorf("userauth method %q: %w", method, ErrInvalid)
+	}
+
+	signatureFollows, err := input.bool()
+	if err != nil {
+		return "", fmt.Errorf("userauth signature flag: %w", err)
+	}
+
+	if !signatureFollows {
+		return "", fmt.Errorf("userauth request without a signature: %w", ErrInvalid)
+	}
+
+	return method, nil
+}
+
+// userauthHostKey reads the server's host key a host-bound request carries
+// after the public key; the plain method carries none, and nil is the
+// answer.
+func userauthHostKey(input *reader, method string) ([]byte, error) {
+	if method != userauthMethodHostbound {
+		return nil, nil
+	}
+
+	hostKey, err := input.bytes()
+	if err != nil {
+		return nil, fmt.Errorf("userauth host key: %w", err)
+	}
+
+	if len(hostKey) == 0 {
+		return nil, fmt.Errorf("empty userauth host key: %w", ErrInvalid)
+	}
+
+	return hostKey, nil
 }
 
 // sshsigMagic opens the data ssh-keygen -Y sign asks to have signed,

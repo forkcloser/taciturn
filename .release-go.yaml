@@ -1,0 +1,99 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# goreleaser — the release lane for taciturn (limen's book, "Releasing").
+# `just do release vX.Y.Z` makes the signed tag and pushes it; the push runs
+# .github/workflows/release.yaml, which runs `just do release --ci` on a macOS
+# runner: goreleaser, keyless cosign over the checksums, a GitHub artifact
+# attestation over every asset. Dry run: `just do release --local --dry-run`
+# (no tag, no publish, artifacts under build/release/).
+version: 2
+
+project_name: taciturn
+
+# Under build/, which the canonical .gitignore covers, and a subdirectory of
+# it: goreleaser --clean wipes its dist directory, and the dev builds the
+# other recipes put in build/ must survive a release run.
+dist: build/release
+
+# Twin of the `release` recipe in .limen/just/build-go.just — the
+# developer-facing builder. A flag change here must land there too (and vice
+# versa); the intended differences are: the version stamp source
+# ({{ .Version }} here, `git describe` there — identical on a release tag),
+# mod_timestamp (reproducibility is a shipped-artifact concern), and the
+# target list: one. The agent is cgo against Security.framework, and the
+# Secure Enclave exists only on Apple silicon (docs/design.md), so there is
+# nothing to cross-compile and the runner that builds this is a Mac.
+builds:
+  - main: ./cmd/taciturn
+    binary: taciturn
+    env:
+      - CGO_ENABLED=1
+      # The builder's C hardening set as it resolves on darwin: ld64 has
+      # neither stack-clash protection nor the -z linker flags, so the
+      # Linux-only part is absent and CGO_LDFLAGS is empty.
+      - CGO_CFLAGS=-Wall -Werror=format-security -O2 -fstack-protector-strong -fPIE -D_FORTIFY_SOURCE=2 -pipe
+      - CGO_CXXFLAGS=-Wall -Werror=format-security -O2 -fstack-protector-strong -fPIE -D_FORTIFY_SOURCE=2 -pipe
+    flags:
+      - -trimpath
+    buildmode: pie
+    # With cgo they keep DNS and user lookups out of libc, as in the builder.
+    tags:
+      - netgo
+      - osusergo
+    # External linking, as the builder does under cgo: Apple's ld signs the
+    # binary ad hoc, which is what the enclave needs (design, F3).
+    ldflags:
+      - -linkmode=external -extldflags=-pie -s -w -X main.version={{ .Version }}
+    targets:
+      - darwin_arm64
+    # Reproducible builds: stamp the commit time, not the build time.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+# One archive: taciturn_<version>_darwin_arm64.tar.gz, the asset aqua pins.
+archives:
+  - formats: ["tar.gz"]
+
+checksum:
+  # The single checksums file aqua verifies release assets against.
+  name_template: checksums.txt
+
+# cosign (v3, Sigstore bundle format) over the checksums file — signing that
+# one file transitively covers every artifact it lists. Two lanes, switched by
+# whether COSIGN_KEY is set (the `just do release` recipe controls that):
+#
+#   Key-based (local: `just do release --local <key> vX.Y.Z`) — COSIGN_KEY +
+#   COSIGN_PASSWORD in the environment; --use-signing-config=false means no
+#   signing services are contacted and signing works fully offline.
+#
+#   Keyless (CI: the release workflow runs `just do release --ci`) — no key
+#   exists at all: cosign exchanges the workflow's OIDC token (id-token:
+#   write) for a short-lived Fulcio certificate whose identity IS the
+#   workflow@tag, and the signature is logged in Rekor. Verify against that
+#   identity:
+#     cosign verify-blob --bundle checksums.txt.sigstore.json \
+#       --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#       --certificate-identity-regexp \
+#         'https://github.com/forkcloser/taciturn/\.github/workflows/release\.yaml@refs/tags/v.*' \
+#       checksums.txt
+#
+# goreleaser only substitutes ${signature}/${artifact} in args; ${COSIGN_KEY:-}
+# survives for the shell to branch on. One line, not a block scalar: yamlfmt
+# corrupts folded scalars (its internal line marker leaks into the content).
+signs:
+  - cmd: sh
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args:
+      - -c
+      - 'if [ -n "${COSIGN_KEY:-}" ]; then cosign sign-blob --yes --key "${COSIGN_KEY}" --use-signing-config=false --bundle "${signature}" "${artifact}"; else cosign sign-blob --yes --bundle "${signature}" "${artifact}"; fi'
+
+release:
+  # Any prerelease-suffixed tag is published as a GitHub prerelease, so it
+  # can never become the repository's "latest release".
+  prerelease: auto
+  # A retried release overwrites the assets a previous partial attempt
+  # uploaded instead of failing on "already_exists"; the release recipe only
+  # reuses a tag that still points at HEAD.
+  replace_existing_artifacts: true
+
+changelog:
+  use: github-native

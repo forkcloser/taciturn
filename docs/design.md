@@ -4,7 +4,9 @@ Status: **decided by Apostasie, 2026-10-12** (the record is the last section; cg
 purego was decided in the same conversation). Written that day by the Taciturn session.
 Every fact below marked *(verified)* was checked on this machine that day (macAntaloop,
 macOS 26.6.2, Apple Silicon, Xcode 27.0, Go 1.27.2); the scratch programs and their output
-are in the appendix. Nothing is implemented yet.
+are in the appendix. v0.1 is implemented and in service; the section "v0.2: keys in the
+data-protection keychain, in a signed bundle", decided 2026-10-13, amends decision 1 and
+the distribution section and is the next implementation.
 
 ## Why
 
@@ -661,6 +663,137 @@ Each was put as a question with the alternatives; the answer and its reason stan
     purego would hand-declare them unchecked under a security boundary; wazero has no
     library to run, since the work happens in the enclave behind Mach IPC, and would still
     need the same binding as host functions.
+
+## v0.2: keys in the data-protection keychain, in a signed bundle
+
+Status: **decided by Apostasie, 2026-10-13**, after the experiment below ran on this
+machine. v0.1 is in service (the bot signs and pushes through it); v0.2 changes where the
+key lives and what ships, not the protocol, the policy or the socket.
+
+### Why
+
+Decision 1 put the wrapped key blob in a `0600` file. That file is the key: the enclave
+unwraps it for any process on this Mac that presents it, so the fence around the bot key
+is the filesystem (the directory's mode, the sessions' sandbox read-deny) and the agent's
+policy, which only governs processes that ask the agent. A same-user process that reads
+the file needs no agent. With a paid Apple developer account on hand, the question was
+whether code signing buys a better story. It does, in one specific way: a key created in
+the **data-protection keychain under a keychain access group** is reachable only by code
+signed by the team with that group, so the blob stops being a file anyone can read, and
+the only road to the key for everything else on the machine is the agent's socket and its
+policy.
+
+### Facts, verified 2026-10-13
+
+The probe is `_scratch/keychain-experiment` (a cgo program and `run.sh`), built into
+`Probe.app` with an `Info.plist`, an entitlements file naming
+`com.apple.application-identifier`, `com.apple.developer.team-identifier` and
+`keychain-access-groups = [<team>.org.forkcloser.taciturn]`, a development provisioning
+profile for the App ID `org.forkcloser.taciturn` made in the developer portal (no
+capability enabled: the profile carries `keychain-access-groups` for the team prefix on
+its own), and signed with the Apple Development identity.
+
+- **F13 *(verified)*** The bundled binary, launched by path from a shell, creates a
+  permanent P-256 enclave key in the data-protection keychain (`kSecAttrIsPermanent`,
+  `kSecUseDataProtectionKeychain`, `kSecAttrAccessGroup`), with the same
+  `SecAccessControl` as v0.1 (private-key usage, `AfterFirstUnlockThisDeviceOnly`), lists
+  it with its group, and signs with it. No `-34018`. The bundle moved to another directory
+  and the binary reached through a symlink (the aqua proxy's way) both keep working.
+- **F14 *(verified)*** The same binary copied out of the bundle and re-signed ad hoc, and an
+  unrelated ad-hoc binary, both get `-25300` (item not found): outside the group the key
+  is invisible, not merely refused.
+- **F15 *(verified)*** The signed binary copied out of its bundle, without the profile
+  beside it, is killed at launch by the kernel: restricted entitlements require the
+  profile. A bare binary with these entitlements cannot exist; the bundle is the unit.
+- **F16 *(verified)*** The keychain does not change what the key is. The `toid` blob of a
+  keychain-resident key, obtained by the entitled process, loads with
+  `SecKeyCreateWithData` in a bare process and signs. The group protects the item, not
+  the material: v0.2's agent therefore never exports a blob, and `enclave.Key.Blob()`
+  goes.
+- **F17 *(verified)*** A v0.1 keychain-less key, rebuilt from its blob, is stored in the
+  data-protection keychain under the group with one `SecItemAdd` of the key reference,
+  then listed and used from the bundle: **migration without rotation**, the bot's key and
+  its GitHub registration unchanged.
+- **F18 *(verified)*** A keychain-resident key of the locked class signs with the screen
+  locked, from the bundle; the same minute, taciturn's v0.1 key authenticated to GitHub
+  with the screen locked.
+- **F19 *(assumed, proven by the first release)*** A Developer ID Application signature
+  with a Developer ID provisioning profile behaves as the development pair did for
+  `keychain-access-groups`; Apple documents both as the two ways to carry that
+  entitlement on macOS. The first v0.2 release run is the proof, read before the pin.
+
+### What changes
+
+- **Keys** (`internal/enclave`, `internal/keystore`): a key is created permanent in the
+  data-protection keychain under the access group, `kSecAttrLabel` and
+  `kSecAttrApplicationTag` set to its fingerprint; loaded by `SecItemCopyMatching` on the
+  label, the public key checked against the record as before (the F4 guard, now against
+  substitution in the keychain); deleted by `SecItemDelete`. The store keeps the record
+  file only (name, class, public key, policy, lineage); no blob file is written, and
+  `Blob()` is gone from the enclave API. The access group is read at run time from the
+  process's own `keychain-access-groups` entitlement (`SecTaskCopyValueForEntitlement`):
+  the entry that ends in `org.forkcloser.taciturn`, whatever else the plist lists and in
+  whatever order; a process without one gets `ErrUnavailable` with the reason "not
+  running from the signed bundle", which `doctor` prints. No team identifier in the
+  source. The item survives upgrades: the fence is the team and the group, not the
+  binary's cdhash, which is exactly the v1 objection to the keychain (an upgrade changes
+  an ad-hoc program's identity and loses the item) that the Developer ID signature
+  removes.
+- **The bundle**: the release ships `Taciturn.app/Contents/{Info.plist,
+  embedded.provisionprofile, MacOS/taciturn}`; `CFBundleIdentifier` is
+  `org.forkcloser.taciturn`, the LaunchAgent label unchanged. It is a command-line tool
+  that happens to live in a bundle: launched by path, never through Launch Services. aqua's
+  registry entry points its `files` at `Taciturn.app/Contents/MacOS/taciturn`; `taciturn
+  install` writes the LaunchAgent with that path, resolved as today.
+- **Release lane**: goreleaser builds the binary as now; a post-build hook assembles the
+  bundle and runs `codesign --sign "Developer ID Application" --options runtime
+  --timestamp --entitlements`; the archive carries the bundle. The identity comes from
+  repository secrets: `APPLE_DEVELOPER_ID_P12` (base64 of the `.p12`),
+  `APPLE_DEVELOPER_ID_P12_PASSWORD`, `APPLE_PROVISIONING_PROFILE` (base64 of the
+  Developer ID `.provisionprofile`). The workflow imports the certificate into a temporary
+  keychain it creates and deletes in the same job, grants `codesign` the partition, and
+  never writes the key to disk unencrypted outside that keychain. No notarization in
+  v0.2: aqua downloads without a quarantine attribute and the tool runs by path, so
+  Gatekeeper is not in the path; revisited if it ever is.
+- **Migration**: `taciturn key import` walks the store, moves each v0.1 blob into the
+  keychain under the key's fingerprint (F17), checks the public key, signs a test message
+  with the keychain-resident key and verifies it, and only then deletes the blob file: a
+  key that lists but will not sign is caught while the blob still exists. `doctor`
+  reports a store that still has blobs. Order on a machine: pin v0.2,
+  install (the LaunchAgent now runs the bundle), `key import`, verify a signature in the
+  audit log, done; the sessions see the same key throughout.
+- **Peers by requirement** (follow-up, with forkcloser/openssh): once the fork's `ssh` and
+  `ssh-keygen` carry a Developer ID signature, the default peer entries become
+  requirements, `anchor apple generic and certificate leaf[subject.OU] = "<team>" and
+  identifier "org.forkcloser.ssh"` and the same for `ssh-keygen`, in place of the path
+  globs under the aqua roots; the identifiers are the ones the fork's `build.sh` sets today.
+- **Testing**: the enclave and agent hardware tests need the entitlement, so a
+  `test-hardware` recipe builds each hardware test binary, wraps it in a development
+  bundle signed with the Apple Development identity and the development profile at
+  `~/Library/MobileDevice/Provisioning Profiles/taciturn-dev.provisionprofile` (or
+  `TACITURN_DEV_PROFILE`), and runs it; the tests skip where the entitlement is absent, so
+  CI and the sandbox stay green and read nothing they cannot.
+- **Threat model**, amended: "same-user process reads the blob" moves from *can sign* to
+  *cannot see the key*; what remains able to sign without the agent is code signed by the
+  team with the group, root, and a securityd compromise. The audit log and the policy are
+  unchanged.
+
+### Decisions (Apostasie, 2026-10-13)
+
+12. **Keys in the data-protection keychain under `<team>.org.forkcloser.taciturn`**,
+    permanent, labelled by fingerprint; the record file stays, the blob file goes, the
+    agent exports no key material (F16).
+13. **taciturn ships as `Taciturn.app`**, signed with the team's Developer ID and an
+    embedded Developer ID provisioning profile, launched by path; aqua and the
+    LaunchAgent point inside the bundle (F13, F15).
+14. **The release lane signs in CI** from the three repository secrets above, in a
+    temporary keychain; no notarization in v0.2.
+15. **Existing keys are imported, not rotated** (F17): `taciturn key import`, once per
+    machine; GitHub and every `.lint-signers` stay as they are.
+16. **The access group is read from the entitlement at run time**, the entry ending in
+    `org.forkcloser.taciturn`; a build without it cannot touch keys and says so.
+17. **The fork's binaries get a Developer ID signature** so peers are named by
+    requirement; until then the path entries stand (Forkcloser Maintainer's side).
 
 ## Appendix: the experiments
 

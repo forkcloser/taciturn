@@ -47,10 +47,37 @@ builds:
       - darwin_arm64
     # Reproducible builds: stamp the commit time, not the build time.
     mod_timestamp: "{{ .CommitTimestamp }}"
+    # The binary ships inside Taciturn.app, signed with the team's Developer
+    # ID and carrying the provisioning profile that grants its keychain
+    # access group (docs/design.md v0.2): hack/bundle.sh assembles and signs
+    # it after the build, from TACITURN_SIGN_IDENTITY and TACITURN_PROFILE
+    # the release workflow sets. Without them (a dry run on a machine with
+    # no certificate) the bundle is assembled unsigned.
+    hooks:
+      post:
+        - cmd: hack/bundle.sh {{ .Path }} build/release/bundle
+          env:
+            - TACITURN_BUNDLE_VERSION={{ .Version }}
 
-# One archive: taciturn_<version>_darwin_arm64.tar.gz, the asset aqua pins.
+# One archive: taciturn_<version>_darwin_arm64.tar.gz, the asset aqua pins,
+# carrying Taciturn.app and nothing else; the bare binary never ships, since
+# the kernel refuses its entitlements outside the bundle (design, F15).
 archives:
   - formats: ["tar.gz"]
+    meta: true
+    name_template: "{{ .ProjectName }}_{{ .Version }}_darwin_arm64"
+    # goreleaser puts each glob's matches under dst stripped of their common
+    # directory, so each directory of the bundle is its own entry, named in
+    # full: Contents (Info.plist, the embedded profile), MacOS (the binary)
+    # and _CodeSignature (what codesign wrote). hack/bundle.sh signs every
+    # bundle, ad hoc without an identity, so the three exist in a dry run too.
+    files:
+      - src: build/release/bundle/Taciturn.app/Contents/*
+        dst: Taciturn.app/Contents
+      - src: build/release/bundle/Taciturn.app/Contents/MacOS/*
+        dst: Taciturn.app/Contents/MacOS
+      - src: build/release/bundle/Taciturn.app/Contents/_CodeSignature/*
+        dst: Taciturn.app/Contents/_CodeSignature
 
 checksum:
   # The single checksums file aqua verifies release assets against.

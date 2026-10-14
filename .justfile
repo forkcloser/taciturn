@@ -12,3 +12,9 @@ fix: do::fix::go::default do::fix::default
 test: do::test::go::unit do::test::go::race
 # The security workflow runs `just security`.
 security: do::security::default
+
+# The hardware lanes, on a Mac outside any sandbox: the enclave and the
+# keychain, through test binaries wrapped in a development bundle
+# (hack/test-hardware.sh, docs/design.md "Testing").
+test-hardware:
+    hack/test-hardware.sh

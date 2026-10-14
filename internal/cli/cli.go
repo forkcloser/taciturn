@@ -171,6 +171,7 @@ func usage(w io.Writer) {
                                        who may ask: any, path=GLOB, or a code requirement
   taciturn key sshsig NAME -namespace NS [-remove]
   taciturn key delete NAME -yes
+  taciturn key import                  move v0.1 keys from their blob files into the keychain
   taciturn key rotate NAME             a successor, served beside NAME@<date>
   taciturn key retire NAME             no longer served; the files stay
   taciturn key signers NAME -principal EMAIL

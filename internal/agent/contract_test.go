@@ -74,7 +74,7 @@ func (h host) bind(t *testing.T, sessionID []byte, forwarding bool) []byte {
 // botKey is a record whose public key is a real P-256 point, so a client
 // can parse it, and whose blob is not an enclave's: a signature the policy
 // allows fails at the enclave, which is what the tests here rely on.
-func botKey(t *testing.T, name string, pol policy.Policy) (keystore.Record, []byte) {
+func botKey(t *testing.T, name string, pol policy.Policy) keystore.Record {
 	t.Helper()
 
 	private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -99,7 +99,7 @@ func botKey(t *testing.T, name string, pol policy.Policy) (keystore.Record, []by
 		Class:       keystore.ClassAfterFirstUnlock,
 		Created:     time.Date(2026, time.October, 12, 16, 0, 0, 0, time.UTC),
 		Policy:      pol,
-	}, bytes.Repeat([]byte{0xAB}, 324)
+	}
 }
 
 func sessionID() []byte {
@@ -341,16 +341,16 @@ func TestListingFollowsTheBinding(t *testing.T) {
 	h := newHost(t)
 	other := newHost(t)
 
-	record, blob := botKey(t, "bot", github(h))
-	if err := r.store.Create(record, blob); err != nil {
+	record := botKey(t, "bot", github(h))
+	if err := r.store.Create(record); err != nil {
 		t.Fatal(err)
 	}
 
-	retired, retiredBlob := botKey(t, "old", github(h))
+	retired := botKey(t, "old", github(h))
 	when := time.Now()
 	retired.Retired = &when
 
-	if err := r.store.Create(retired, retiredBlob); err != nil {
+	if err := r.store.Create(retired); err != nil {
 		t.Fatal(err)
 	}
 
@@ -399,8 +399,8 @@ func TestBindingIsVerified(t *testing.T) {
 	r := start(t)
 	h := newHost(t)
 
-	record, blob := botKey(t, "bot", github(h))
-	if err := r.store.Create(record, blob); err != nil {
+	record := botKey(t, "bot", github(h))
+	if err := r.store.Create(record); err != nil {
 		t.Fatal(err)
 	}
 
@@ -470,8 +470,8 @@ func TestSignatureRefusals(t *testing.T) {
 	r := start(t)
 	h := newHost(t)
 
-	record, blob := botKey(t, "bot", github(h))
-	if err := r.store.Create(record, blob); err != nil {
+	record := botKey(t, "bot", github(h))
+	if err := r.store.Create(record); err != nil {
 		t.Fatal(err)
 	}
 
@@ -480,7 +480,7 @@ func TestSignatureRefusals(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	unknown, _ := botKey(t, "unknown", github(h))
+	unknown := botKey(t, "unknown", github(h))
 
 	unknownKey, err := ssh.ParsePublicKey(unknown.PublicKey)
 	if err != nil {
@@ -547,8 +547,8 @@ func TestAllowedSignatureNeedsTheEnclave(t *testing.T) {
 	r := start(t)
 	h := newHost(t)
 
-	record, blob := botKey(t, "bot", github(h))
-	if err := r.store.Create(record, blob); err != nil {
+	record := botKey(t, "bot", github(h))
+	if err := r.store.Create(record); err != nil {
 		t.Fatal(err)
 	}
 
@@ -577,17 +577,17 @@ func TestPeerPolicy(t *testing.T) {
 
 	own := github(h)
 	own.Peers = []string{policy.PeerPathPrefix + executable}
-	ownRecord, ownBlob := botKey(t, "own", own)
+	ownRecord := botKey(t, "own", own)
 
-	if err = r.store.Create(ownRecord, ownBlob); err != nil {
+	if err = r.store.Create(ownRecord); err != nil {
 		t.Fatal(err)
 	}
 
 	foreign := github(h)
 	foreign.Peers = []string{policy.PeerPathPrefix + "/usr/bin/ssh", `anchor apple and identifier "com.apple.ssh"`}
-	foreignRecord, foreignBlob := botKey(t, "foreign", foreign)
+	foreignRecord := botKey(t, "foreign", foreign)
 
-	if err = r.store.Create(foreignRecord, foreignBlob); err != nil {
+	if err = r.store.Create(foreignRecord); err != nil {
 		t.Fatal(err)
 	}
 

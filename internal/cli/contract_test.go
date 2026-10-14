@@ -70,7 +70,7 @@ func seed(t *testing.T, name string) (string, keystore.Record) {
 		Policy:      policy.Policy{Peers: []string{policy.PeerAny}},
 	}
 
-	if err := store.Create(record, bytes.Repeat([]byte{1}, 324)); err != nil {
+	if err := store.Create(record); err != nil {
 		t.Fatal(err)
 	}
 
@@ -403,5 +403,45 @@ func TestPeers(t *testing.T) {
 	code, _, errOut = run(t, "key", "create", "bot2", "-store", store, "-use", "locked", "-peers", "any,")
 	if code != 1 || !strings.Contains(errOut, "invalid peer entry") {
 		t.Fatalf("create with a bad peer: exit %d: %s", code, errOut)
+	}
+}
+
+// `key import` moves nothing where nothing is pending, and where a v0.1
+// blob is pending it needs the keychain: in a process without it the
+// command fails and the blob stays, which is the safe side.
+func TestImport(t *testing.T) {
+	t.Parallel()
+
+	store, record := seed(t, "bot")
+
+	code, out, _ := run(t, "key", "import", "-store", store)
+	if code != 0 || !strings.Contains(out, "nothing to import") {
+		t.Fatalf("import with nothing pending: exit %d: %s", code, out)
+	}
+
+	blob := filepath.Join(
+		store,
+		strings.NewReplacer("/", "_", "+", "-").Replace(record.Fingerprint[len("SHA256:"):])+".blob",
+	)
+	if err := os.WriteFile(blob, bytes.Repeat([]byte{1}, 324), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, errOut := run(t, "key", "import", "-store", store)
+	if code == 0 {
+		t.Skip("the keychain answered: this process is in the signed bundle")
+	}
+
+	if !strings.Contains(errOut, record.Fingerprint) {
+		t.Fatalf("import without the keychain: exit %d: %s", code, errOut)
+	}
+
+	if _, err := os.Stat(blob); err != nil {
+		t.Fatalf("the blob did not stay after a failed import: %v", err)
+	}
+
+	code, out, _ = run(t, "doctor", "-store", store, "-socket", filepath.Join(t.TempDir(), "none"))
+	if code == 0 || !strings.Contains(out, "1 keys still to move into the keychain") {
+		t.Fatalf("doctor with a pending blob: exit %d: %s", code, out)
 	}
 }

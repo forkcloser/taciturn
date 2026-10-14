@@ -8,14 +8,19 @@ import (
 	"github.com/forkcloser/taciturn/internal/protocol"
 )
 
-// The allowed path, end to end, on the hardware: a key made in the
-// enclave, stored, served, bound, signed for, and the signature verified
-// by x/crypto against the public key the agent listed.
+// The allowed path, end to end, on the hardware and from the signed
+// bundle: a key made in the enclave, stored in the keychain under its
+// fingerprint, its record written, served, bound, signed for, and the
+// signature verified by x/crypto against the public key the agent listed.
 func TestSignEndToEnd(t *testing.T) {
 	t.Parallel()
 
 	if !enclave.Available() {
 		t.Skip("no Secure Enclave reachable from this process")
+	}
+
+	if _, err := enclave.AccessGroup(); err != nil {
+		t.Skipf("no keychain access group, the test binary is not in the signed bundle: %v", err)
 	}
 
 	r := start(t)
@@ -26,19 +31,24 @@ func TestSignEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	blob, point := made.Blob(), made.Public()
-	made.Close()
+	defer made.Close()
 
-	public, err := protocol.ECDSAP256PublicKey(point)
+	public, err := protocol.ECDSAP256PublicKey(made.Public())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	record, _ := botKey(t, "bot", github(h))
+	record := botKey(t, "bot", github(h))
 	record.PublicKey = public
 	record.Fingerprint = protocol.Fingerprint(public)
 
-	if err = r.store.Create(record, blob); err != nil {
+	if err = made.Store(record.Fingerprint); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = enclave.Delete(record.Fingerprint) })
+
+	if err = r.store.Create(record); err != nil {
 		t.Fatal(err)
 	}
 

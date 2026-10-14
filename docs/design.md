@@ -728,7 +728,10 @@ its own), and signed with the Apple Development identity.
   data-protection keychain under the access group, `kSecAttrLabel` and
   `kSecAttrApplicationTag` set to its fingerprint; loaded by `SecItemCopyMatching` on the
   label, the public key checked against the record as before (the F4 guard, now against
-  substitution in the keychain); deleted by `SecItemDelete`. The store keeps the record
+  substitution in the keychain); deleted by `SecItemDelete`. The keychain tells keys
+  apart by their own attributes, not by the label: it stores two different keys under one
+  label as two items (seen on the hardware, 2026-10-13), so the uniqueness of the label is
+  taciturn's to enforce, by a lookup before every store. The store keeps the record
   file only (name, class, public key, policy, lineage); no blob file is written, and
   `Blob()` is gone from the enclave API. The access group is read at run time from the
   process's own `keychain-access-groups` entitlement (`SecTaskCopyValueForEntitlement`):

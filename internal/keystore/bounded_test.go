@@ -129,9 +129,8 @@ func runSequence(t *testing.T, sequence []op) {
 	store := open(t)
 	model := map[string]keystore.Record{}
 	records := make([]keystore.Record, 2)
-	blobs := make([][]byte, 2)
-	records[0], blobs[0] = key(t, "first", 1)
-	records[1], blobs[1] = key(t, "second", 2)
+	records[0], _ = key(t, "first", 1)
+	records[1], _ = key(t, "second", 2)
 
 	for step, o := range sequence {
 		record := records[o.key]
@@ -140,7 +139,7 @@ func runSequence(t *testing.T, sequence []op) {
 
 		switch o.kind {
 		case "create":
-			err = store.Create(record, blobs[o.key])
+			err = store.Create(record)
 			_, exists := model[record.Fingerprint]
 
 			if exists != errors.Is(err, keystore.ErrExists) || (!exists && err != nil) {

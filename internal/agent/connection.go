@@ -219,7 +219,7 @@ func (c *connection) sign(payload []byte) protocol.Message {
 		return protocol.Failure()
 	}
 
-	signature, err := c.signWithEnclave(record, request.Data)
+	signature, err := signWithEnclave(record, request.Data)
 	if err != nil {
 		c.audit("refuse", append(attrs, "error", err.Error())...)
 
@@ -289,20 +289,17 @@ func describe(data []byte) []any {
 	return []any{attrData, "other"}
 }
 
-func (c *connection) signWithEnclave(record keystore.Record, data []byte) ([]byte, error) {
-	blob, err := c.server.config.Store.Blob(record.Fingerprint)
-	if err != nil {
-		return nil, fmt.Errorf("reading blob: %w", err)
-	}
-
+// signWithEnclave loads the key from the keychain by its fingerprint,
+// checks it against the record's public key, and signs.
+func signWithEnclave(record keystore.Record, data []byte) ([]byte, error) {
 	point, err := protocol.ECDSAP256PublicKeyPoint(record.PublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("stored public key: %w", err)
 	}
 
-	key, err := enclave.Load(blob, point)
+	key, err := enclave.Load(record.Fingerprint, point)
 	if err != nil {
-		return nil, fmt.Errorf("loading key: %w", err)
+		return nil, fmt.Errorf("loading key from the keychain: %w", err)
 	}
 
 	defer key.Close()

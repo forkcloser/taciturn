@@ -8,7 +8,8 @@ package enclave
 #include <Security/Security.h>
 #include <string.h>
 
-// taciturn_error carries a CFError out of a call: its code and its text.
+// taciturn_error carries a CFError or an OSStatus out of a call: its code
+// and its text.
 typedef struct {
 	long code;
 	char message[256];
@@ -29,12 +30,71 @@ static void taciturn_capture(CFErrorRef err, taciturn_error *out) {
 	CFRelease(err);
 }
 
+static void taciturn_status(OSStatus status, taciturn_error *out) {
+	out->code = status;
+	out->message[0] = 0;
+	if (status == errSecSuccess) {
+		return;
+	}
+	CFStringRef text = SecCopyErrorMessageString(status, NULL);
+	if (text != NULL) {
+		CFStringGetCString(text, out->message, sizeof out->message, kCFStringEncodingUTF8);
+		CFRelease(text);
+	}
+}
+
 static CFMutableDictionaryRef taciturn_dictionary(void) {
 	return CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 }
 
-// taciturn_generate makes a non-permanent P-256 key in the enclave with
-// private-key-usage access control in the given class.
+static CFStringRef taciturn_string(const char *text) {
+	return CFStringCreateWithCString(NULL, text, kCFStringEncodingUTF8);
+}
+
+// taciturn_access_groups writes this process's own keychain-access-groups
+// entitlement into buf, one entry per line: the count of entries written,
+// 0 when the process carries no such entitlement (a build outside the
+// signed bundle, docs/design.md v0.2).
+static int taciturn_access_groups(char *buf, size_t length) {
+	buf[0] = 0;
+	SecTaskRef task = SecTaskCreateFromSelf(NULL);
+	if (task == NULL) {
+		return 0;
+	}
+	CFErrorRef err = NULL;
+	CFTypeRef value = SecTaskCopyValueForEntitlement(task, CFSTR("keychain-access-groups"), &err);
+	CFRelease(task);
+	if (err != NULL) {
+		CFRelease(err);
+	}
+	if (value == NULL) {
+		return 0;
+	}
+	int written = 0;
+	size_t used = 0;
+	if (CFGetTypeID(value) == CFArrayGetTypeID()) {
+		CFIndex count = CFArrayGetCount((CFArrayRef)value);
+		for (CFIndex i = 0; i < count && used + 2 < length; i++) {
+			CFTypeRef entry = CFArrayGetValueAtIndex((CFArrayRef)value, i);
+			if (entry == NULL || CFGetTypeID(entry) != CFStringGetTypeID()) {
+				continue;
+			}
+			if (!CFStringGetCString((CFStringRef)entry, buf + used, length - used, kCFStringEncodingUTF8)) {
+				break;
+			}
+			used += strlen(buf + used);
+			buf[used++] = '\n';
+			buf[used] = 0;
+			written++;
+		}
+	}
+	CFRelease(value);
+	return written;
+}
+
+// taciturn_generate makes a transient P-256 key in the enclave with
+// private-key-usage access control in the given class. Transient: the
+// keychain holds nothing until taciturn_store adds it.
 static SecKeyRef taciturn_generate(int after_first_unlock, taciturn_error *e) {
 	CFErrorRef err = NULL;
 	CFTypeRef protection = after_first_unlock
@@ -70,6 +130,7 @@ static SecKeyRef taciturn_generate(int after_first_unlock, taciturn_error *e) {
 
 // taciturn_blob is the enclave's wrapped copy of the key: the
 // kSecAttrTokenOID attribute, whose name the public headers do not export.
+// It stays inside this package (docs/design.md F16).
 static CFDataRef taciturn_blob(SecKeyRef key) {
 	CFDictionaryRef attributes = SecKeyCopyAttributes(key);
 	if (attributes == NULL) {
@@ -83,10 +144,10 @@ static CFDataRef taciturn_blob(SecKeyRef key) {
 	return toid;
 }
 
-// taciturn_load rebuilds a key from its blob. The blob goes in the
-// attributes as kSecAttrTokenOID: SecKeyCreateWithData ignores its data
-// argument for a token key and generates a fresh key when the attribute is
-// absent (docs/design.md F4).
+// taciturn_load rebuilds a transient key from its blob, for an import of a
+// v0.1 key. The blob goes in the attributes as kSecAttrTokenOID:
+// SecKeyCreateWithData ignores its data argument for a token key and
+// generates a fresh key when the attribute is absent (docs/design.md F4).
 static SecKeyRef taciturn_load(const void *blob, size_t length, taciturn_error *e) {
 	CFErrorRef err = NULL;
 	CFDataRef toid = CFDataCreate(NULL, blob, length);
@@ -104,6 +165,61 @@ static SecKeyRef taciturn_load(const void *blob, size_t length, taciturn_error *
 	CFRelease(empty);
 	CFRelease(toid);
 	return key;
+}
+
+// taciturn_store adds the key to the data-protection keychain under the
+// access group, labelled, as a permanent item (docs/design.md F13, F17).
+static OSStatus taciturn_store(SecKeyRef key, const char *label, const char *group) {
+	CFStringRef cflabel = taciturn_string(label);
+	CFStringRef cfgroup = taciturn_string(group);
+	CFDataRef tag = CFDataCreate(NULL, (const UInt8 *)label, strlen(label));
+	CFMutableDictionaryRef attributes = taciturn_dictionary();
+	CFDictionarySetValue(attributes, kSecClass, kSecClassKey);
+	CFDictionarySetValue(attributes, kSecValueRef, key);
+	CFDictionarySetValue(attributes, kSecAttrLabel, cflabel);
+	CFDictionarySetValue(attributes, kSecAttrApplicationTag, tag);
+	CFDictionarySetValue(attributes, kSecAttrAccessGroup, cfgroup);
+	CFDictionarySetValue(attributes, kSecUseDataProtectionKeychain, kCFBooleanTrue);
+	OSStatus status = SecItemAdd(attributes, NULL);
+	CFRelease(attributes);
+	CFRelease(tag);
+	CFRelease(cfgroup);
+	CFRelease(cflabel);
+	return status;
+}
+
+// taciturn_lookup finds the private enclave key labelled so in the
+// data-protection keychain, which the framework scopes to the access
+// groups this process is entitled to.
+static SecKeyRef taciturn_lookup(const char *label, taciturn_error *e) {
+	CFStringRef cflabel = taciturn_string(label);
+	CFMutableDictionaryRef query = taciturn_dictionary();
+	CFDictionarySetValue(query, kSecClass, kSecClassKey);
+	CFDictionarySetValue(query, kSecAttrKeyClass, kSecAttrKeyClassPrivate);
+	CFDictionarySetValue(query, kSecAttrTokenID, kSecAttrTokenIDSecureEnclave);
+	CFDictionarySetValue(query, kSecAttrLabel, cflabel);
+	CFDictionarySetValue(query, kSecUseDataProtectionKeychain, kCFBooleanTrue);
+	CFDictionarySetValue(query, kSecReturnRef, kCFBooleanTrue);
+	CFTypeRef ref = NULL;
+	OSStatus status = SecItemCopyMatching(query, &ref);
+	taciturn_status(status, e);
+	CFRelease(query);
+	CFRelease(cflabel);
+	return status == errSecSuccess ? (SecKeyRef)ref : NULL;
+}
+
+// taciturn_delete removes every key item labelled so from the
+// data-protection keychain.
+static OSStatus taciturn_delete(const char *label) {
+	CFStringRef cflabel = taciturn_string(label);
+	CFMutableDictionaryRef query = taciturn_dictionary();
+	CFDictionarySetValue(query, kSecClass, kSecClassKey);
+	CFDictionarySetValue(query, kSecAttrLabel, cflabel);
+	CFDictionarySetValue(query, kSecUseDataProtectionKeychain, kCFBooleanTrue);
+	OSStatus status = SecItemDelete(query);
+	CFRelease(query);
+	CFRelease(cflabel);
+	return status;
 }
 
 // taciturn_public is the public key as an uncompressed point.
@@ -140,13 +256,41 @@ import (
 	"fmt"
 	"math/big"
 	"runtime"
+	"strings"
 	"sync"
 	"unsafe"
 )
 
+const accessGroupBuffer = 4096
+
+// AccessGroup is the keychain access group this process stores keys
+// under: the entry of its own keychain-access-groups entitlement that ends
+// in AccessGroupSuffix, whatever else the entitlement lists and in whatever
+// order (docs/design.md, decision 16). A process without one, which is any
+// build run outside the signed bundle, gets ErrUnavailable, and no key can
+// be stored, loaded or deleted by it.
+func AccessGroup() (string, error) {
+	buf := make([]byte, accessGroupBuffer)
+	if C.taciturn_access_groups((*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len(buf))) < 1 {
+		return "", fmt.Errorf(
+			"no keychain-access-groups entitlement, not running from the signed bundle: %w",
+			ErrUnavailable,
+		)
+	}
+
+	for group := range strings.SplitSeq(C.GoString((*C.char)(unsafe.Pointer(&buf[0]))), "\n") {
+		if strings.HasSuffix(group, "."+AccessGroupSuffix) {
+			return group, nil
+		}
+	}
+
+	return "", fmt.Errorf("no keychain access group ends in %s: %w", AccessGroupSuffix, ErrUnavailable)
+}
+
 // Available says whether this process can reach the enclave: it makes a
-// key and discards it. False from a sandbox, a virtual machine, or a
-// process the framework will not serve.
+// transient key and discards it. False from a sandbox, a virtual machine,
+// or a process the framework will not serve. It says nothing about the
+// keychain; AccessGroup does.
 func Available() bool {
 	key, err := Generate(ClassAfterFirstUnlock)
 	if err != nil {
@@ -158,7 +302,8 @@ func Available() bool {
 	return true
 }
 
-// Generate makes a new key in the enclave with the class.
+// Generate makes a new transient key in the enclave with the class. It
+// exists in this process alone until Store puts it in the keychain.
 func Generate(class Class) (*Key, error) {
 	var afterFirstUnlock C.int
 
@@ -178,25 +323,119 @@ func Generate(class Class) (*Key, error) {
 		return nil, classify("generating key", cerr)
 	}
 
+	return wrap(ref)
+}
+
+// Store puts the key in the data-protection keychain under this process's
+// access group, labelled: from then on Load finds it by the label in any
+// process entitled to the group. A label already taken is ErrExists.
+func (k *Key) Store(label string) error {
+	err := ValidateLabel(label)
+	if err != nil {
+		return err
+	}
+
+	group, err := AccessGroup()
+	if err != nil {
+		return err
+	}
+
+	k.handle.mu.Lock()
+	defer k.handle.mu.Unlock()
+
+	if k.handle.ref == 0 {
+		return fmt.Errorf("key is closed: %w", ErrInvalid)
+	}
+
+	clabel, cgroup := C.CString(label), C.CString(group)
+	defer C.free(unsafe.Pointer(clabel))
+	defer C.free(unsafe.Pointer(cgroup))
+
+	// The keychain tells keys apart by their own attributes, not by the
+	// label: two different keys under one label are two items to it (seen
+	// on the hardware, 2026-10-13). The label is the agent's name for the
+	// key, so it is unique here.
+	var cerr C.taciturn_error
+
+	if taken := C.taciturn_lookup(clabel, &cerr); taken != 0 {
+		C.CFRelease(C.CFTypeRef(taken))
+
+		return fmt.Errorf("keychain item %q: %w", label, ErrExists)
+	}
+
+	status := C.taciturn_store(k.handle.ref, clabel, cgroup)
+	if status == C.errSecDuplicateItem {
+		return fmt.Errorf("keychain item %q: %w", label, ErrExists)
+	}
+
+	if status != C.errSecSuccess {
+		C.taciturn_status(status, &cerr)
+
+		return classify("storing key", cerr)
+	}
+
+	return nil
+}
+
+// Load finds the key labelled so in the keychain and checks it against the
+// public key the caller stored beside the label: a key whose public half
+// is not public is ErrMismatch, and no such key is returned; no key under
+// the label is ErrNotFound.
+func Load(label string, public []byte) (*Key, error) {
+	err := ValidateLabel(label)
+	if err != nil {
+		return nil, err
+	}
+
+	err = validatePoint(public)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = AccessGroup()
+	if err != nil {
+		return nil, err
+	}
+
+	clabel := C.CString(label)
+	defer C.free(unsafe.Pointer(clabel))
+
+	var cerr C.taciturn_error
+
+	ref := C.taciturn_lookup(clabel, &cerr)
+	if ref == 0 {
+		if cerr.code == C.errSecItemNotFound {
+			return nil, fmt.Errorf("keychain item %q: %w", label, ErrNotFound)
+		}
+
+		return nil, classify("looking key up", cerr)
+	}
+
 	key, err := wrap(ref)
 	if err != nil {
 		return nil, err
 	}
 
+	if !bytes.Equal(key.public, public) {
+		key.Close()
+
+		return nil, ErrMismatch
+	}
+
 	return key, nil
 }
 
-// Load rebuilds a key from its blob and checks it against the public key
-// stored beside the blob. A blob the enclave rejects is ErrInvalid; a key
-// whose public half is not public is ErrMismatch, and no such key is
-// returned.
-func Load(blob, public []byte) (*Key, error) {
+// Import rebuilds a v0.1 key from its wrapped blob, checks it against the
+// public key, and stores it in the keychain under the label
+// (docs/design.md F17). The returned key is open.
+func Import(blob, public []byte, label string) (*Key, error) {
 	if len(blob) == 0 {
 		return nil, fmt.Errorf("empty blob: %w", ErrInvalid)
 	}
 
-	if len(public) != PointSize || public[0] != 0x04 {
-		return nil, fmt.Errorf("public key of %d bytes: %w", len(public), ErrInvalid)
+	err := validatePoint(public)
+	if err != nil {
+		return nil, err
 	}
 
 	var cerr C.taciturn_error
@@ -217,14 +456,54 @@ func Load(blob, public []byte) (*Key, error) {
 		return nil, ErrMismatch
 	}
 
-	if !bytes.Equal(key.blob, blob) {
-		// The enclave re-encoded the blob it was given: the key is the
-		// right one (its public half matched), and the stored blob stays
-		// the one to keep, so the key carries it.
-		key.blob = append([]byte(nil), blob...)
+	err = key.Store(label)
+	if err != nil {
+		key.Close()
+
+		return nil, err
 	}
 
 	return key, nil
+}
+
+// Delete removes the key labelled so from the keychain. No key under the
+// label is ErrNotFound.
+func Delete(label string) error {
+	err := ValidateLabel(label)
+	if err != nil {
+		return err
+	}
+
+	_, err = AccessGroup()
+	if err != nil {
+		return err
+	}
+
+	clabel := C.CString(label)
+	defer C.free(unsafe.Pointer(clabel))
+
+	status := C.taciturn_delete(clabel)
+	if status == C.errSecItemNotFound {
+		return fmt.Errorf("keychain item %q: %w", label, ErrNotFound)
+	}
+
+	if status != C.errSecSuccess {
+		var cerr C.taciturn_error
+
+		C.taciturn_status(status, &cerr)
+
+		return classify("deleting key", cerr)
+	}
+
+	return nil
+}
+
+func validatePoint(public []byte) error {
+	if len(public) != PointSize || public[0] != 0x04 {
+		return fmt.Errorf("public key of %d bytes: %w", len(public), ErrInvalid)
+	}
+
+	return nil
 }
 
 // wrap takes ownership of a reference and reads its blob and public key.

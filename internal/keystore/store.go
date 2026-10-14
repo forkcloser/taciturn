@@ -82,18 +82,12 @@ func (s *Store) Dir() string {
 	return s.dir
 }
 
-// Create adds a key: its record and its blob. A key with this fingerprint
-// or a record with this name already present is ErrExists; nothing is
-// written then. The blob is written first and created exclusively, so a
-// crash between the two leaves a blob without a record, which List reports
-// as ErrCorrupt rather than a key that half exists.
-func (s *Store) Create(record Record, blob []byte) error {
+// Create adds a key's record; the key itself is the keychain's. A key with
+// this fingerprint or a record with this name already present is
+// ErrExists; nothing is written then.
+func (s *Store) Create(record Record) error {
 	if err := record.validate(); err != nil {
 		return err
-	}
-
-	if len(blob) == 0 || len(blob) > MaxBlob {
-		return fmt.Errorf("blob of %d bytes: %w", len(blob), ErrInvalid)
 	}
 
 	return s.locked(func() error {
@@ -112,8 +106,8 @@ func (s *Store) Create(record Record, blob []byte) error {
 			}
 		}
 
-		if err := writeExclusive(s.blobPath(record.Fingerprint), blob); err != nil {
-			return err
+		if _, err := os.Stat(s.recordPath(record.Fingerprint)); err == nil {
+			return fmt.Errorf("record of %s: %w", record.Fingerprint, ErrExists)
 		}
 
 		return s.writeRecord(record)
@@ -156,8 +150,8 @@ func (s *Store) Update(record Record) error {
 	})
 }
 
-// Delete removes a key's blob, then its record. A key not in the store is
-// ErrNotFound.
+// Delete removes a key's record, and the v0.1 blob file beside it when one
+// is still there. A key not in the store is ErrNotFound.
 func (s *Store) Delete(fingerprint string) error {
 	if err := ValidateFingerprint(fingerprint); err != nil {
 		return err
@@ -168,7 +162,7 @@ func (s *Store) Delete(fingerprint string) error {
 			return err
 		}
 
-		if err := os.Remove(s.blobPath(fingerprint)); err != nil {
+		if err := os.Remove(s.blobPath(fingerprint)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("removing blob: %w", err)
 		}
 
@@ -213,8 +207,10 @@ func (s *Store) Lookup(nameOrFingerprint string) (Record, error) {
 	return Record{}, fmt.Errorf("name %q: %w", nameOrFingerprint, ErrNotFound)
 }
 
-// Blob returns a key's wrapped blob.
-func (s *Store) Blob(fingerprint string) ([]byte, error) {
+// LegacyBlob returns the v0.1 wrapped blob of a key whose blob file is
+// still in the store, for `key import`; a key with no blob file is
+// ErrNotFound. An oversize file is ErrInvalid.
+func (s *Store) LegacyBlob(fingerprint string) ([]byte, error) {
 	if err := ValidateFingerprint(fingerprint); err != nil {
 		return nil, err
 	}
@@ -223,7 +219,59 @@ func (s *Store) Blob(fingerprint string) ([]byte, error) {
 		return nil, err
 	}
 
-	return readPrivate(s.blobPath(fingerprint))
+	blob, err := readPrivate(s.blobPath(fingerprint))
+	if err != nil {
+		return nil, err
+	}
+
+	if len(blob) == 0 || len(blob) > MaxBlob {
+		return nil, fmt.Errorf("blob of %d bytes: %w", len(blob), ErrInvalid)
+	}
+
+	return blob, nil
+}
+
+// RemoveLegacyBlob deletes a key's v0.1 blob file once the key is in the
+// keychain. A key with no blob file is ErrNotFound.
+func (s *Store) RemoveLegacyBlob(fingerprint string) error {
+	if err := ValidateFingerprint(fingerprint); err != nil {
+		return err
+	}
+
+	return s.locked(func() error {
+		if _, err := s.read(fingerprint); err != nil {
+			return err
+		}
+
+		if err := os.Remove(s.blobPath(fingerprint)); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("blob of %s: %w", fingerprint, ErrNotFound)
+			}
+
+			return fmt.Errorf("removing blob: %w", err)
+		}
+
+		return nil
+	})
+}
+
+// LegacyBlobs lists the fingerprints of the keys whose v0.1 blob file is
+// still in the store: the keys `key import` has yet to move.
+func (s *Store) LegacyBlobs() ([]string, error) {
+	records, err := s.readAll()
+	if err != nil {
+		return nil, err
+	}
+
+	var pending []string
+
+	for _, record := range records {
+		if _, err := os.Stat(s.blobPath(record.Fingerprint)); err == nil {
+			pending = append(pending, record.Fingerprint)
+		}
+	}
+
+	return pending, nil
 }
 
 // List returns every record, oldest first, names breaking ties.
@@ -248,7 +296,8 @@ func (s *Store) locked(fn func() error) error {
 	return nil
 }
 
-// readAll reads every record and checks that records and blobs pair up.
+// readAll reads every record and checks that a v0.1 blob file, where one
+// remains, has its record.
 func (s *Store) readAll() ([]Record, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -272,12 +321,6 @@ func (s *Store) readAll() ([]Record, error) {
 			if err := s.checkRecordExists(name); err != nil {
 				return nil, err
 			}
-		}
-	}
-
-	for _, record := range records {
-		if _, err := os.Stat(s.blobPath(record.Fingerprint)); err != nil {
-			return nil, fmt.Errorf("key %s without its blob: %w", record.Fingerprint, ErrCorrupt)
 		}
 	}
 
@@ -325,10 +368,6 @@ func (s *Store) read(fingerprint string) (Record, error) {
 
 	if record.Fingerprint != fingerprint {
 		return Record{}, fmt.Errorf("record of %s holds key %s: %w", fingerprint, record.Fingerprint, ErrCorrupt)
-	}
-
-	if _, err := os.Stat(s.blobPath(fingerprint)); err != nil {
-		return Record{}, fmt.Errorf("key %s without its blob: %w", fingerprint, ErrCorrupt)
 	}
 
 	return record, nil
@@ -412,48 +451,4 @@ func readChecked(file *os.File) ([]byte, error) {
 	}
 
 	return data, nil
-}
-
-// writeExclusive creates a private file that must not exist, writes it and
-// syncs it: a blob is written once.
-func writeExclusive(path string, data []byte) error {
-	file, err := os.OpenFile(
-		path,
-		os.O_WRONLY|os.O_CREATE|os.O_EXCL,
-		fileMode,
-	) // #nosec G304 -- the store's own directory joined with a validated fingerprint
-	if err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return fmt.Errorf("%s: %w", filepath.Base(path), ErrExists)
-		}
-
-		return fmt.Errorf("creating %s: %w", filepath.Base(path), err)
-	}
-
-	if err := writeSynced(file, data); err != nil {
-		_ = file.Close()
-		_ = os.Remove(path)
-
-		return fmt.Errorf("writing %s: %w", filepath.Base(path), err)
-	}
-
-	if err := file.Close(); err != nil {
-		_ = os.Remove(path)
-
-		return fmt.Errorf("closing %s: %w", filepath.Base(path), err)
-	}
-
-	return nil
-}
-
-func writeSynced(file *os.File, data []byte) error {
-	if _, err := file.Write(data); err != nil {
-		return fmt.Errorf("write: %w", err)
-	}
-
-	if err := file.Sync(); err != nil {
-		return fmt.Errorf("sync: %w", err)
-	}
-
-	return nil
 }

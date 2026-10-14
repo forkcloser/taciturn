@@ -1,9 +1,10 @@
-// The contract of package keystore is its package comment: two private
-// files per key under a private directory, the blob written once, the
-// record replaced atomically, every read checked, and the sentinels for
-// what is refused. The tests here state each clause on one case;
-// bounded_test.go walks the name and fingerprint validators to their edges
-// and holds the store to a model over every short sequence of operations.
+// The contract of package keystore is its package comment: one private
+// record file per key under a private directory, replaced atomically,
+// every read checked, the v0.1 blob read for the import alone, and the
+// sentinels for what is refused. The tests here state each clause on one
+// case; bounded_test.go walks the name and fingerprint validators to their
+// edges and holds the store to a model over every short sequence of
+// operations.
 package keystore_test
 
 import (
@@ -21,8 +22,8 @@ import (
 
 var created = time.Date(2026, time.October, 12, 15, 0, 0, 0, time.UTC)
 
-// key builds a record and a blob for a seed: the seed decides the public
-// key, so two seeds are two keys.
+// key builds a record for a seed, and the blob a v0.1 store would hold for
+// it: the seed decides the public key, so two seeds are two keys.
 func key(t *testing.T, name string, seed byte) (keystore.Record, []byte) {
 	t.Helper()
 
@@ -58,6 +59,14 @@ func open(t *testing.T) *keystore.Store {
 	}
 
 	return store
+}
+
+// legacy puts a v0.1 blob file beside a record, as a store written before
+// keys lived in the keychain holds it.
+func legacy(t *testing.T, store *keystore.Store, record keystore.Record, blob []byte) {
+	t.Helper()
+
+	overwrite(t, blobFile(store, record), blob, 0o600)
 }
 
 func mode(t *testing.T, path string) os.FileMode {
@@ -112,9 +121,9 @@ func TestCreateThenRead(t *testing.T) {
 	t.Parallel()
 
 	store := open(t)
-	record, blob := key(t, "bot", 1)
+	record, _ := key(t, "bot", 1)
 
-	if err := store.Create(record, blob); err != nil {
+	if err := store.Create(record); err != nil {
 		t.Fatal(err)
 	}
 
@@ -127,11 +136,6 @@ func TestCreateThenRead(t *testing.T) {
 		t.Fatalf("got %+v\nwant %+v", got, record)
 	}
 
-	gotBlob, err := store.Blob(record.Fingerprint)
-	if err != nil || !bytes.Equal(gotBlob, blob) {
-		t.Fatalf("blob: %x %v", gotBlob, err)
-	}
-
 	byName, err := store.Lookup("bot")
 	if err != nil || byName.Fingerprint != record.Fingerprint {
 		t.Fatalf("lookup by name: %+v %v", byName, err)
@@ -140,6 +144,10 @@ func TestCreateThenRead(t *testing.T) {
 	byFingerprint, err := store.Lookup(record.Fingerprint)
 	if err != nil || byFingerprint.Name != "bot" {
 		t.Fatalf("lookup by fingerprint: %+v %v", byFingerprint, err)
+	}
+
+	if _, err = store.LegacyBlob(record.Fingerprint); !errors.Is(err, keystore.ErrNotFound) {
+		t.Fatalf("a new key has no legacy blob: %v", err)
 	}
 
 	entries, err := os.ReadDir(store.Dir())
@@ -152,6 +160,10 @@ func TestCreateThenRead(t *testing.T) {
 			continue
 		}
 
+		if entry.Name() != fileID(record.Fingerprint)+".json" {
+			t.Fatalf("unexpected file %s", entry.Name())
+		}
+
 		if got := mode(t, filepath.Join(store.Dir(), entry.Name())); got != 0o600 {
 			t.Fatalf("%s has mode %o", entry.Name(), got)
 		}
@@ -162,18 +174,18 @@ func TestCreateRefusesDuplicates(t *testing.T) {
 	t.Parallel()
 
 	store := open(t)
-	record, blob := key(t, "bot", 1)
+	record, _ := key(t, "bot", 1)
 
-	if err := store.Create(record, blob); err != nil {
+	if err := store.Create(record); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := store.Create(record, blob); !errors.Is(err, keystore.ErrExists) {
+	if err := store.Create(record); !errors.Is(err, keystore.ErrExists) {
 		t.Fatalf("same key again: %v", err)
 	}
 
-	other, otherBlob := key(t, "bot", 2)
-	if err := store.Create(other, otherBlob); !errors.Is(err, keystore.ErrExists) {
+	other, _ := key(t, "bot", 2)
+	if err := store.Create(other); !errors.Is(err, keystore.ErrExists) {
 		t.Fatalf("same name, other key: %v", err)
 	}
 
@@ -187,40 +199,35 @@ func TestCreateRefusesBadInput(t *testing.T) {
 	t.Parallel()
 
 	store := open(t)
-	record, blob := key(t, "bot", 1)
+	record, _ := key(t, "bot", 1)
 
-	cases := map[string]func(*keystore.Record, *[]byte){
-		"empty blob":        func(_ *keystore.Record, b *[]byte) { *b = nil },
-		"oversize blob":     func(_ *keystore.Record, b *[]byte) { *b = make([]byte, keystore.MaxBlob+1) },
-		"bad name":          func(r *keystore.Record, _ *[]byte) { r.Name = "no spaces" },
-		"bad class":         func(r *keystore.Record, _ *[]byte) { r.Class = "always" },
-		"no creation time":  func(r *keystore.Record, _ *[]byte) { r.Created = time.Time{} },
-		"wrong fingerprint": func(r *keystore.Record, _ *[]byte) { r.Fingerprint = "SHA256:" + r.Fingerprint[8:] + "A" },
-		"not a P-256 key":   func(r *keystore.Record, _ *[]byte) { r.PublicKey = []byte("ssh-ed25519") },
-		"bad predecessor":   func(r *keystore.Record, _ *[]byte) { r.Predecessor = "bot" },
-		"bad successor":     func(r *keystore.Record, _ *[]byte) { r.Successor = "SHA256:short" },
+	cases := map[string]func(*keystore.Record){
+		"bad name":          func(r *keystore.Record) { r.Name = "no spaces" },
+		"bad class":         func(r *keystore.Record) { r.Class = "always" },
+		"no creation time":  func(r *keystore.Record) { r.Created = time.Time{} },
+		"wrong fingerprint": func(r *keystore.Record) { r.Fingerprint = "SHA256:" + r.Fingerprint[8:] + "A" },
+		"not a P-256 key":   func(r *keystore.Record) { r.PublicKey = []byte("ssh-ed25519") },
+		"bad predecessor":   func(r *keystore.Record) { r.Predecessor = "bot" },
+		"bad successor":     func(r *keystore.Record) { r.Successor = "SHA256:short" },
 	}
 
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			rec, b := record, blob
-			mutate(&rec, &b)
+			rec := record
+			mutate(&rec)
 
-			if err := store.Create(rec, b); !errors.Is(err, keystore.ErrInvalid) {
+			if err := store.Create(rec); !errors.Is(err, keystore.ErrInvalid) {
 				t.Fatalf("got %v", err)
 			}
 		})
 	}
 
-	if _, err := os.Stat(filepath.Join(store.Dir(), ".lock")); err == nil {
-		// the lock file may exist; nothing else may
-		entries, _ := os.ReadDir(store.Dir())
-		for _, e := range entries {
-			if e.Name() != ".lock" {
-				t.Fatalf("refused create left %s", e.Name())
-			}
+	entries, _ := os.ReadDir(store.Dir())
+	for _, e := range entries {
+		if e.Name() != ".lock" {
+			t.Fatalf("refused create left %s", e.Name())
 		}
 	}
 }
@@ -229,14 +236,14 @@ func TestUpdate(t *testing.T) {
 	t.Parallel()
 
 	store := open(t)
-	record, blob := key(t, "bot", 1)
-	other, otherBlob := key(t, "other", 2)
+	record, _ := key(t, "bot", 1)
+	other, _ := key(t, "other", 2)
 
-	if err := store.Create(record, blob); err != nil {
+	if err := store.Create(record); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := store.Create(other, otherBlob); err != nil {
+	if err := store.Create(other); err != nil {
 		t.Fatal(err)
 	}
 
@@ -253,11 +260,6 @@ func TestUpdate(t *testing.T) {
 	got, err := store.Get(record.Fingerprint)
 	if err != nil || !sameRecord(got, record) {
 		t.Fatalf("after update: %+v %v", got, err)
-	}
-
-	gotBlob, err := store.Blob(record.Fingerprint)
-	if err != nil || !bytes.Equal(gotBlob, blob) {
-		t.Fatalf("blob after update: %v", err)
 	}
 
 	record.Name = "other"
@@ -277,9 +279,11 @@ func TestDelete(t *testing.T) {
 	store := open(t)
 	record, blob := key(t, "bot", 1)
 
-	if err := store.Create(record, blob); err != nil {
+	if err := store.Create(record); err != nil {
 		t.Fatal(err)
 	}
+
+	legacy(t, store, record, blob)
 
 	if err := store.Delete(record.Fingerprint); err != nil {
 		t.Fatal(err)
@@ -289,8 +293,8 @@ func TestDelete(t *testing.T) {
 		t.Fatalf("after delete: %v", err)
 	}
 
-	if _, err := store.Blob(record.Fingerprint); !errors.Is(err, keystore.ErrNotFound) {
-		t.Fatalf("blob after delete: %v", err)
+	if _, err := os.Stat(blobFile(store, record)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the legacy blob outlived its record: %v", err)
 	}
 
 	if err := store.Delete(record.Fingerprint); !errors.Is(err, keystore.ErrNotFound) {
@@ -303,14 +307,71 @@ func TestDelete(t *testing.T) {
 	}
 }
 
+// A v0.1 store's blob is read for the import, listed as pending until it is
+// removed, and gone after; a record with no blob has none to give.
+func TestLegacyBlob(t *testing.T) {
+	t.Parallel()
+
+	store := open(t)
+	record, blob := key(t, "bot", 1)
+	fresh, _ := key(t, "fresh", 2)
+
+	if err := store.Create(record); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Create(fresh); err != nil {
+		t.Fatal(err)
+	}
+
+	legacy(t, store, record, blob)
+
+	pending, err := store.LegacyBlobs()
+	if err != nil || len(pending) != 1 || pending[0] != record.Fingerprint {
+		t.Fatalf("pending: %v %v", pending, err)
+	}
+
+	got, err := store.LegacyBlob(record.Fingerprint)
+	if err != nil || !bytes.Equal(got, blob) {
+		t.Fatalf("legacy blob: %x %v", got, err)
+	}
+
+	if _, err = store.LegacyBlob(fresh.Fingerprint); !errors.Is(err, keystore.ErrNotFound) {
+		t.Fatalf("blob of a key without one: %v", err)
+	}
+
+	if err = store.RemoveLegacyBlob(fresh.Fingerprint); !errors.Is(err, keystore.ErrNotFound) {
+		t.Fatalf("removing a blob a key does not have: %v", err)
+	}
+
+	if err = store.RemoveLegacyBlob(record.Fingerprint); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = store.LegacyBlob(record.Fingerprint); !errors.Is(err, keystore.ErrNotFound) {
+		t.Fatalf("blob after removal: %v", err)
+	}
+
+	pending, err = store.LegacyBlobs()
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("pending after removal: %v %v", pending, err)
+	}
+
+	legacy(t, store, record, make([]byte, keystore.MaxBlob+1))
+
+	if _, err = store.LegacyBlob(record.Fingerprint); !errors.Is(err, keystore.ErrInvalid) {
+		t.Fatalf("oversize blob: %v", err)
+	}
+}
+
 func TestListIsOldestFirst(t *testing.T) {
 	t.Parallel()
 
 	store := open(t)
 
 	for _, seed := range []byte{3, 1, 2} {
-		record, blob := key(t, "k"+string(rune('0'+seed)), seed)
-		if err := store.Create(record, blob); err != nil {
+		record, _ := key(t, "k"+string(rune('0'+seed)), seed)
+		if err := store.Create(record); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -341,15 +402,10 @@ func TestCorruptionIsReportedNotServed(t *testing.T) {
 			data = bytes.ReplaceAll(data, []byte(record.Fingerprint), []byte(other.Fingerprint))
 			overwrite(t, recordFile(store, record), data, 0o600)
 		},
-		"record without blob": func(t *testing.T, store *keystore.Store, record keystore.Record) {
-			t.Helper()
-
-			if err := os.Remove(blobFile(store, record)); err != nil {
-				t.Fatal(err)
-			}
-		},
 		"blob without record": func(t *testing.T, store *keystore.Store, record keystore.Record) {
 			t.Helper()
+
+			legacy(t, store, record, bytes.Repeat([]byte{1}, 324))
 
 			if err := os.Remove(recordFile(store, record)); err != nil {
 				t.Fatal(err)
@@ -362,9 +418,9 @@ func TestCorruptionIsReportedNotServed(t *testing.T) {
 			t.Parallel()
 
 			store := open(t)
-			record, blob := key(t, "bot", 1)
+			record, _ := key(t, "bot", 1)
 
-			if err := store.Create(record, blob); err != nil {
+			if err := store.Create(record); err != nil {
 				t.Fatal(err)
 			}
 
@@ -378,8 +434,8 @@ func TestCorruptionIsReportedNotServed(t *testing.T) {
 				t.Fatalf("Lookup: %v", err)
 			}
 
-			other, otherBlob := key(t, "other", 2)
-			if err := store.Create(other, otherBlob); !errors.Is(err, keystore.ErrCorrupt) {
+			other, _ := key(t, "other", 2)
+			if err := store.Create(other); !errors.Is(err, keystore.ErrCorrupt) {
 				t.Fatalf("Create beside corruption: %v", err)
 			}
 		})
@@ -392,15 +448,17 @@ func TestAFileReadableByOthersIsInsecure(t *testing.T) {
 	store := open(t)
 	record, blob := key(t, "bot", 1)
 
-	if err := store.Create(record, blob); err != nil {
+	if err := store.Create(record); err != nil {
 		t.Fatal(err)
 	}
+
+	legacy(t, store, record, blob)
 
 	if err := os.Chmod(blobFile(store, record), 0o640); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := store.Blob(record.Fingerprint); !errors.Is(err, keystore.ErrInsecure) {
+	if _, err := store.LegacyBlob(record.Fingerprint); !errors.Is(err, keystore.ErrInsecure) {
 		t.Fatalf("group-readable blob: %v", err)
 	}
 
@@ -430,6 +488,10 @@ func TestLookupsValidateTheirArgument(t *testing.T) {
 
 	if err := store.Delete("bot"); !errors.Is(err, keystore.ErrInvalid) {
 		t.Fatalf("Delete by name: %v", err)
+	}
+
+	if _, err := store.LegacyBlob("bot"); !errors.Is(err, keystore.ErrInvalid) {
+		t.Fatalf("LegacyBlob by name: %v", err)
 	}
 
 	record, _ := key(t, "bot", 1)

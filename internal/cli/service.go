@@ -269,6 +269,9 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 
 	doc.check(enclave.Available(), "secure enclave reachable from this process")
 
+	group, err := enclave.AccessGroup()
+	doc.check(err == nil, "keychain access group "+group+describeErr(err))
+
 	store, err := keystore.Open(*storePath)
 	doc.check(err == nil, "key store "+*storePath+describeErr(err))
 
@@ -292,8 +295,14 @@ func (d *doctor) checkKeys(store *keystore.Store) {
 	records, err := store.List()
 	d.check(err == nil, fmt.Sprintf("key store readable, %d keys%s", len(records), describeErr(err)))
 
+	pending, err := store.LegacyBlobs()
+	d.check(
+		err == nil && len(pending) == 0,
+		fmt.Sprintf("%d keys still to move into the keychain (taciturn key import)%s", len(pending), describeErr(err)),
+	)
+
 	for _, record := range records {
-		err := checkKey(store, record)
+		err := checkKey(record)
 		d.check(err == nil, "key "+record.Name+" "+record.Fingerprint+describeErr(err))
 	}
 }
@@ -306,27 +315,22 @@ func describeErr(err error) string {
 	return ": " + err.Error()
 }
 
-// checkKey loads a stored key through the enclave and checks it against
-// its public key, without signing.
-func checkKey(store *keystore.Store, record keystore.Record) error {
-	blob, err := store.Blob(record.Fingerprint)
-	if err != nil {
-		return storeError(err)
-	}
-
+// checkKey loads a key from the keychain, checks it against its public key,
+// and proves it with a signature.
+func checkKey(record keystore.Record) error {
 	point, err := protocol.ECDSAP256PublicKeyPoint(record.PublicKey)
 	if err != nil {
 		return fmt.Errorf("stored public key: %w", err)
 	}
 
-	key, err := enclave.Load(blob, point)
+	key, err := enclave.Load(record.Fingerprint, point)
 	if err != nil {
-		return fmt.Errorf("enclave: %w", err)
+		return fmt.Errorf("keychain: %w", err)
 	}
 
-	key.Close()
+	defer key.Close()
 
-	return nil
+	return proveKey(key, record)
 }
 
 // auditRecord is the shape of a line the agent writes, as far as the log

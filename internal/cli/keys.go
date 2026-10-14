@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -22,13 +25,14 @@ import (
 )
 
 var (
-	errName      = errors.New("a key name is required")
-	errClass     = errors.New("-use must be locked or unlocked")
-	errConfirm   = errors.New("deletion needs -yes")
-	errRetired   = errors.New("key is retired")
-	errArgument  = errors.New("missing argument")
-	errPeerFlags = errors.New("-add and -remove are exclusive")
-	errPeerEntry = errors.New("invalid peer entry")
+	errName           = errors.New("a key name is required")
+	errClass          = errors.New("-use must be locked or unlocked")
+	errConfirm        = errors.New("deletion needs -yes")
+	errRetired        = errors.New("key is retired")
+	errArgument       = errors.New("missing argument")
+	errPeerFlags      = errors.New("-add and -remove are exclusive")
+	errPeerEntry      = errors.New("invalid peer entry")
+	errSignatureCheck = errors.New("the key's signature does not verify against its public key")
 )
 
 // The access classes as the command line names them.
@@ -111,6 +115,8 @@ func runKey(args []string, stdout, stderr io.Writer) error {
 		return keySSHSig(loc, args[1:], stdout, stderr)
 	case "delete":
 		return keyDelete(loc, args[1:], stdout, stderr)
+	case "import":
+		return keyImport(loc, args[1:], stdout, stderr)
 	case "rotate":
 		return keyRotate(loc, args[1:], stdout, stderr)
 	case "retire":
@@ -187,13 +193,9 @@ func keyCreate(loc locations, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	record, blob, err := generate(name, class, enclaveClass, policy.Policy{Peers: allowed})
+	record, err := createKey(store, name, class, enclaveClass, policy.Policy{Peers: allowed})
 	if err != nil {
 		return err
-	}
-
-	if err = store.Create(record, blob); err != nil {
-		return storeError(err)
 	}
 
 	_, _ = fmt.Fprintf(
@@ -206,6 +208,43 @@ func keyCreate(loc locations, args []string, stdout, stderr io.Writer) error {
 	)
 
 	return nil
+}
+
+// createKey makes a key in the enclave, stores it in the keychain under its
+// fingerprint, and writes its record; a record the store refuses takes the
+// keychain item down with it, so nothing half exists.
+func createKey(
+	store *keystore.Store,
+	name string,
+	class keystore.Class,
+	enclaveClass enclave.Class,
+	pol policy.Policy,
+) (keystore.Record, error) {
+	record, key, err := generate(name, class, enclaveClass, pol)
+	if err != nil {
+		return keystore.Record{}, err
+	}
+
+	defer key.Close()
+
+	if err = key.Store(record.Fingerprint); err != nil {
+		return keystore.Record{}, fmt.Errorf("keychain: %w", err)
+	}
+
+	if err = store.Create(record); err != nil {
+		if undo := enclave.Delete(record.Fingerprint); undo != nil {
+			return keystore.Record{}, fmt.Errorf(
+				"%w; and the key stays in the keychain as %s: %w",
+				storeError(err),
+				record.Fingerprint,
+				undo,
+			)
+		}
+
+		return keystore.Record{}, storeError(err)
+	}
+
+	return record, nil
 }
 
 func classOf(use string) (keystore.Class, enclave.Class, error) {
@@ -227,22 +266,23 @@ func enclaveClassOf(class keystore.Class) enclave.Class {
 	return enclave.ClassAfterFirstUnlock
 }
 
-// generate makes a key in the enclave and the record for it.
+// generate makes a key in the enclave and the record for it; the key comes
+// back open, the caller's to store and close.
 func generate(
 	name string,
 	class keystore.Class,
 	enclaveClass enclave.Class,
 	pol policy.Policy,
-) (keystore.Record, []byte, error) {
+) (keystore.Record, *enclave.Key, error) {
 	key, err := enclave.Generate(enclaveClass)
 	if err != nil {
 		return keystore.Record{}, nil, fmt.Errorf("enclave: %w", err)
 	}
 
-	defer key.Close()
-
 	public, err := protocol.ECDSAP256PublicKey(key.Public())
 	if err != nil {
+		key.Close()
+
 		return keystore.Record{}, nil, fmt.Errorf("public key: %w", err)
 	}
 
@@ -255,7 +295,114 @@ func generate(
 		Policy:      pol,
 	}
 
-	return record, key.Blob(), nil
+	return record, key, nil
+}
+
+// proveKey signs a test message with the key and verifies the signature
+// against the public key the record carries: the check `key import` runs
+// before it lets a blob go, and doctor runs on every key.
+func proveKey(key *enclave.Key, record keystore.Record) error {
+	message := []byte("taciturn key check " + record.Fingerprint)
+
+	sigR, sigS, err := key.Sign(message)
+	if err != nil {
+		return fmt.Errorf("signing: %w", err)
+	}
+
+	point, err := protocol.ECDSAP256PublicKeyPoint(record.PublicKey)
+	if err != nil {
+		return fmt.Errorf("stored public key: %w", err)
+	}
+
+	public, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
+	if err != nil {
+		return fmt.Errorf("stored public key: %w", err)
+	}
+
+	digest := sha256.Sum256(message)
+	if !ecdsa.Verify(public, digest[:], sigR, sigS) {
+		return errSignatureCheck
+	}
+
+	return nil
+}
+
+// keyImport moves every v0.1 key whose blob is still in the store into the
+// keychain, proves each by a signature, and deletes the blob only then
+// (docs/design.md, decision 15).
+func keyImport(loc locations, args []string, stdout, stderr io.Writer) error {
+	set := flagSet("key import", stderr)
+	storePath := storeFlag(set, loc)
+
+	if err := parse(set, args); err != nil {
+		return err
+	}
+
+	store, err := openStore(*storePath)
+	if err != nil {
+		return err
+	}
+
+	pending, err := store.LegacyBlobs()
+	if err != nil {
+		return storeError(err)
+	}
+
+	if len(pending) == 0 {
+		_, _ = fmt.Fprintln(stdout, "nothing to import: every key is in the keychain")
+
+		return nil
+	}
+
+	for _, fingerprint := range pending {
+		if err := importKey(store, fingerprint); err != nil {
+			return fmt.Errorf("%s: %w", fingerprint, err)
+		}
+
+		_, _ = fmt.Fprintf(stdout, "imported %s into the keychain; its blob file is gone\n", fingerprint)
+	}
+
+	return nil
+}
+
+func importKey(store *keystore.Store, fingerprint string) error {
+	record, err := store.Get(fingerprint)
+	if err != nil {
+		return storeError(err)
+	}
+
+	blob, err := store.LegacyBlob(fingerprint)
+	if err != nil {
+		return storeError(err)
+	}
+
+	point, err := protocol.ECDSAP256PublicKeyPoint(record.PublicKey)
+	if err != nil {
+		return fmt.Errorf("stored public key: %w", err)
+	}
+
+	key, err := enclave.Import(blob, point, fingerprint)
+	if errors.Is(err, enclave.ErrExists) {
+		// An earlier import stored it and did not get to remove the blob:
+		// the keychain's copy is checked like a fresh one.
+		key, err = enclave.Load(fingerprint, point)
+	}
+
+	if err != nil {
+		return fmt.Errorf("keychain: %w", err)
+	}
+
+	defer key.Close()
+
+	if err = proveKey(key, record); err != nil {
+		return fmt.Errorf("the keychain key does not sign, the blob stays: %w", err)
+	}
+
+	if err = store.RemoveLegacyBlob(fingerprint); err != nil {
+		return storeError(err)
+	}
+
+	return nil
 }
 
 // authorizedKey is the public key as GitHub and authorized_keys take it.
@@ -657,6 +804,18 @@ func keyDelete(loc locations, args []string, stdout, stderr io.Writer) error {
 		return storeError(err)
 	}
 
+	// The keychain item goes first: a record without its item is a key
+	// doctor reports, an item without its record is a key nothing names.
+	switch err = enclave.Delete(record.Fingerprint); {
+	case err == nil:
+	case errors.Is(err, enclave.ErrNotFound):
+		_, _ = fmt.Fprintf(stderr, "taciturn: %s was not in the keychain\n", record.Fingerprint)
+	case errors.Is(err, enclave.ErrUnavailable):
+		_, _ = fmt.Fprintf(stderr, "taciturn: the keychain item of %s stays: %v\n", record.Fingerprint, err)
+	default:
+		return fmt.Errorf("keychain: %w", err)
+	}
+
 	if err = store.Delete(record.Fingerprint); err != nil {
 		return storeError(err)
 	}
@@ -701,26 +860,36 @@ func keyRotate(loc locations, args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("%s: %w", name, errRetired)
 	}
 
-	successor, blob, err := generate(name, current.Class, enclaveClassOf(current.Class), current.Policy)
+	successor, key, err := generate(name, current.Class, enclaveClassOf(current.Class), current.Policy)
 	if err != nil {
 		return err
 	}
 
+	defer key.Close()
+
 	successor.Predecessor = current.Fingerprint
+
+	if err = key.Store(successor.Fingerprint); err != nil {
+		return fmt.Errorf("keychain: %w", err)
+	}
 
 	// The successor takes the name, so the current key gives it up first;
 	// a store that then refuses the successor gets the current key back as
-	// it was, so a failed rotation leaves nothing renamed and nothing
-	// dangling.
+	// it was and the successor leaves the keychain, so a failed rotation
+	// leaves nothing renamed and nothing dangling.
 	before := current
 	current.Name = name + rotatedNameSep + successor.Created.Format(dateLayout)
 	current.Successor = successor.Fingerprint
 
 	if err = store.Update(current); err != nil {
+		_ = enclave.Delete(successor.Fingerprint)
+
 		return storeError(err)
 	}
 
-	if err = store.Create(successor, blob); err != nil {
+	if err = store.Create(successor); err != nil {
+		_ = enclave.Delete(successor.Fingerprint)
+
 		if restore := store.Update(before); restore != nil {
 			return fmt.Errorf("%w; and %s stays renamed %s: %w", storeError(err), name, current.Name, restore)
 		}

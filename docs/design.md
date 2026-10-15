@@ -311,7 +311,10 @@ Per key, stored in its `.json`, set by the CLI:
     {"user": "git", "host": "github.com", "hostkeys": ["ssh-ed25519 AAAA…", "ecdsa-sha2-nistp256 AAAA…", "ssh-rsa AAAA…"]}
   ],
   "sshsig": ["git"],
-  "peers": ["anchor apple and (identifier \"com.apple.ssh\" or identifier \"com.apple.ssh-keygen\")"]
+  "peers": [
+    "path=/Users/me/.local/share/aquaproj-aqua/pkgs/github_release/github.com/forkcloser/openssh/*/*/*/bin/ssh",
+    "path=/Users/me/.local/share/aquaproj-aqua/pkgs/github_release/github.com/forkcloser/openssh/*/*/*/bin/ssh-keygen"
+  ]
 }
 ```
 
@@ -331,9 +334,9 @@ Per key, stored in its `.json`, set by the CLI:
   limen-install-agent's), so the environment that creates a key does not decide which
   client may use it (the fork's binaries carry an ad-hoc signature, so a path is what
   identifies them; the log records the cdhash of every peer, so the build that asked is
-  on record). Until the fork is the sessions' client, the default also carries Apple's
+  on record). Until the fork was the sessions' client, the default also carried Apple's
   `anchor apple and identifier "com.apple.ssh"` / `"com.apple.ssh-keygen"` as a named
-  interim allowance, removed in the release that follows the switch. `--peers any` turns
+  interim allowance; v0.2.1 removed it, the switch made. `--peers any` turns
   the check off for a key; `key peers NAME --add/--remove` edits the list afterwards, and
   every entry is checked as the agent reads it (a glob the matcher takes, a requirement
   the framework parses), since the agent treats what it cannot read as unsatisfied and a
@@ -631,9 +634,10 @@ Each was put as a question with the alternatives; the answer and its reason stan
    is locked, until reboot, so unattended sessions finish their pushes. Same exposure as
    while present, within the policy.
 3. **Peer requirement on by default, naming our ssh fork only** (path under aqua's
-   package directory, the human's root and the sessions'), with Apple's `ssh`/`ssh-keygen`
-   as a named interim allowance until the fork is the sessions' client (it ships P-256
-   since v10.6.1.2). The bot then has exactly one client. `--peers any` per key.
+   package directory, the human's root and the sessions'). Apple's `ssh`/`ssh-keygen` were
+   a named interim allowance until the fork was the sessions' client (it ships P-256
+   since v10.6.1.2), gone from the default since v0.2.1. The bot has exactly one client.
+   `--peers any` per key.
 4. **A user-authentication signature on an unbound connection is refused.** Only sshsig
    requests are answered unbound. Breaks no OpenSSH since 8.9; refuses every other client.
 5. **Own protocol loop**, not `x/crypto/ssh/agent.ServeAgent`: a 64 KiB bound, a
@@ -645,8 +649,8 @@ Each was put as a question with the alternatives; the answer and its reason stan
 7. **forkcloser/openssh gains ECDSA P-256** (a LibreSSL build, the config left
    ed25519-only, the sessions naming `ecdsa-sha2-nistp256` alone) and becomes the bot's only
    ssh; `limen-install-agent` points the sessions at the fork's `ssh` and `ssh-keygen` by
-   real path. Requests to the Forkcloser Maintainer and to Limen. Apple's ssh is the
-   interim.
+   real path. Requests to the Forkcloser Maintainer and to Limen, both done. Apple's ssh
+   was the interim.
 8. **The repository is public, MIT; the first PR is `limen bootstrap` plus this
    document**, through The Reviewer; then one PR per package in dependency order
    (`protocol`, `policy`, `keystore`, `enclave`, `agent`, `peer`, `launchd`, `cmd`), the

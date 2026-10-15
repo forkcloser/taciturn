@@ -43,13 +43,11 @@ const (
 
 // The peers a new key allows by default: forkcloser/openssh's ssh and
 // ssh-keygen by path under every aqua root this machine runs tools from,
-// and, until the fork is the sessions' client, Apple's (docs/design.md,
-// decision 3). The fork's package directory is one version component
-// (vX.Y.Z or vX.Y.Z.N), the archive, the archive's directory, then bin.
+// and nothing else (docs/design.md, decision 3). The fork's package
+// directory is one version component (vX.Y.Z or vX.Y.Z.N), the archive,
+// the archive's directory, then bin.
 const (
 	forkPackages   = "pkgs/github_release/github.com/forkcloser/openssh/*/*/*/bin/"
-	appleSSH       = `anchor apple and identifier "com.apple.ssh"`
-	appleSSHKeygen = `anchor apple and identifier "com.apple.ssh-keygen"`
 	humanAquaRoot  = ".local/share/aquaproj-aqua"
 	agentAquaRoot  = ".local/share/limen-agent/aqua"
 	dateLayout     = "20060102"
@@ -83,7 +81,7 @@ func defaultPeers() []string {
 		)
 	}
 
-	return append(peers, appleSSH, appleSSHKeygen)
+	return peers
 }
 
 func runKey(args []string, stdout, stderr io.Writer) error {
@@ -161,7 +159,7 @@ func keyCreate(loc locations, args []string, stdout, stderr io.Writer) error {
 	peers := set.String(
 		"peers",
 		"",
-		"who may ask, comma-separated: any, path=GLOB, or a code requirement; default: our ssh and Apple's",
+		"who may ask, comma-separated: any, path=GLOB, or a code requirement; default: our ssh and ssh-keygen",
 	)
 
 	if err = parse(set, rest); err != nil {

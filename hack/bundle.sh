@@ -49,7 +49,7 @@ cat > "$app/Contents/Info.plist" <<EOF
 	<key>CFBundleShortVersionString</key>
 	<string>${TACITURN_BUNDLE_VERSION:-0}</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>14.0</string>
+	<string>15.0</string>
 	<key>LSBackgroundOnly</key>
 	<true/>
 </dict>

@@ -636,7 +636,7 @@ Each was put as a question with the alternatives; the answer and its reason stan
    `--peers`, and the installer that configures the client names it, which for the
    sessions is forkcloser/openssh's `ssh` and `ssh-keygen` by path under the machine's
    aqua root (the fork ships P-256 since v10.6.1.2). The bot has exactly one client.
-   Until v0.2.1 the list had a compiled default, the fork's pair under both aqua roots
+   Until the release after v0.2.0 the list had a compiled default, the fork's pair under both aqua roots
    plus Apple's `ssh`/`ssh-keygen` as an interim allowance while Apple's ssh was the
    sessions' client; a default that a release changes is a policy nobody stated, so it
    went. `--peers any` per key.

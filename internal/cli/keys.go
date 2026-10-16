@@ -8,13 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
-	"github.com/mycophonic/primordium/filesystem/dirs"
 	"github.com/mycophonic/primordium/format"
 
 	"github.com/forkcloser/taciturn/internal/enclave"
@@ -32,6 +30,7 @@ var (
 	errArgument       = errors.New("missing argument")
 	errPeerFlags      = errors.New("-add and -remove are exclusive")
 	errPeerEntry      = errors.New("invalid peer entry")
+	errPeers          = errors.New("-peers is required: who may ask this key to sign, and nothing is assumed")
 	errSignatureCheck = errors.New("the key's signature does not verify against its public key")
 )
 
@@ -41,50 +40,11 @@ const (
 	useUnlocked = "unlocked"
 )
 
-// The peers a new key allows by default: forkcloser/openssh's ssh and
-// ssh-keygen by path under every aqua root this machine runs tools from,
-// and, until the fork is the sessions' client, Apple's (docs/design.md,
-// decision 3). The fork's package directory is one version component
-// (vX.Y.Z or vX.Y.Z.N), the archive, the archive's directory, then bin.
 const (
-	forkPackages   = "pkgs/github_release/github.com/forkcloser/openssh/*/*/*/bin/"
-	appleSSH       = `anchor apple and identifier "com.apple.ssh"`
-	appleSSHKeygen = `anchor apple and identifier "com.apple.ssh-keygen"`
-	humanAquaRoot  = ".local/share/aquaproj-aqua"
-	agentAquaRoot  = ".local/share/limen-agent/aqua"
 	dateLayout     = "20060102"
 	rotatedNameSep = "@"
 	formatSSH      = "ssh"
 )
-
-// aquaRoots are the roots the fork may run from: the human's and the
-// sessions' (limen-install-agent's, under its agent root), whichever this
-// process was started under first, so that the environment that creates a
-// key does not decide which client may use it.
-func aquaRoots() []string {
-	home := dirs.HomeDir()
-	roots := []string{filepath.Join(home, humanAquaRoot), filepath.Join(home, agentAquaRoot)}
-
-	if root := os.Getenv("AQUA_ROOT_DIR"); root != "" && !slices.Contains(roots, root) {
-		roots = append([]string{root}, roots...)
-	}
-
-	return roots
-}
-
-func defaultPeers() []string {
-	var peers []string
-
-	for _, root := range aquaRoots() {
-		peers = append(
-			peers,
-			policy.PeerPathPrefix+filepath.Join(root, forkPackages, "ssh"),
-			policy.PeerPathPrefix+filepath.Join(root, forkPackages, "ssh-keygen"),
-		)
-	}
-
-	return append(peers, appleSSH, appleSSHKeygen)
-}
 
 func runKey(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
@@ -161,7 +121,7 @@ func keyCreate(loc locations, args []string, stdout, stderr io.Writer) error {
 	peers := set.String(
 		"peers",
 		"",
-		"who may ask, comma-separated: any, path=GLOB, or a code requirement; default: our ssh and Apple's",
+		"who may ask, comma-separated: any, path=GLOB, or a code requirement; required, nothing is assumed",
 	)
 
 	if err = parse(set, rest); err != nil {
@@ -177,11 +137,13 @@ func keyCreate(loc locations, args []string, stdout, stderr io.Writer) error {
 		return storeError(err)
 	}
 
-	allowed := defaultPeers()
-	if *peers != "" {
-		allowed = strings.Split(*peers, ",")
+	// Who may ask is the creator's statement, never taciturn's guess: the
+	// installer that set the client up names it (docs/design.md, decision 3).
+	if *peers == "" {
+		return errPeers
 	}
 
+	allowed := strings.Split(*peers, ",")
 	for _, entry := range allowed {
 		if err = validPeer(entry); err != nil {
 			return err

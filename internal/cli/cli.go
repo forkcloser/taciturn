@@ -162,7 +162,7 @@ func usage(w io.Writer) {
   taciturn log [-follow] [-json] [-key NAME]
                                        the audit log
 
-  taciturn key create NAME -use locked|unlocked [-peers any]
+  taciturn key create NAME -use locked|unlocked -peers ENTRY[,ENTRY]
   taciturn key list [-format console|json|ssh]
   taciturn key show NAME
   taciturn key allow NAME -user USER -host HOST -known-hosts FILE

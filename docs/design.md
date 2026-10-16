@@ -311,7 +311,10 @@ Per key, stored in its `.json`, set by the CLI:
     {"user": "git", "host": "github.com", "hostkeys": ["ssh-ed25519 AAAA…", "ecdsa-sha2-nistp256 AAAA…", "ssh-rsa AAAA…"]}
   ],
   "sshsig": ["git"],
-  "peers": ["anchor apple and (identifier \"com.apple.ssh\" or identifier \"com.apple.ssh-keygen\")"]
+  "peers": [
+    "path=/Users/me/.local/share/aquaproj-aqua/pkgs/github_release/github.com/forkcloser/openssh/*/*/*/bin/ssh",
+    "path=/Users/me/.local/share/aquaproj-aqua/pkgs/github_release/github.com/forkcloser/openssh/*/*/*/bin/ssh-keygen"
+  ]
 }
 ```
 
@@ -324,17 +327,15 @@ Per key, stored in its `.json`, set by the CLI:
   and tags). Empty means none.
 - `peers`: who may ask. Each entry is either a code-signing requirement (Apple's
   requirement language, checked on the connection's audit token, F9) or
-  `path=<glob>`, the peer's executable path as `SecCodeCopyPath` reports it. The default,
-  set at `key create`, names **forkcloser/openssh's `ssh` and `ssh-keygen` only**, by path
-  under every aqua root the machine runs tools from: the human's
-  (`~/.local/share/aquaproj-aqua`) and the sessions' (`~/.local/share/limen-agent/aqua`,
-  limen-install-agent's), so the environment that creates a key does not decide which
-  client may use it (the fork's binaries carry an ad-hoc signature, so a path is what
+  `path=<glob>`, the peer's executable path as `SecCodeCopyPath` reports it. The list is
+  **the creator's statement, required at `key create`, and taciturn assumes nothing**:
+  no compiled default, no stored baseline, no file read at creation. Whoever sets the
+  client up names it, which in the fleet is limen-install-agent, since it is what points
+  the sessions at forkcloser/openssh's `ssh` and `ssh-keygen` by real path under the
+  machine's aqua root (the fork's binaries carry an ad-hoc signature, so a path is what
   identifies them; the log records the cdhash of every peer, so the build that asked is
-  on record). Until the fork is the sessions' client, the default also carries Apple's
-  `anchor apple and identifier "com.apple.ssh"` / `"com.apple.ssh-keygen"` as a named
-  interim allowance, removed in the release that follows the switch. `--peers any` turns
-  the check off for a key; `key peers NAME --add/--remove` edits the list afterwards, and
+  on record). A human creating a key by hand states the list the same way. `--peers any`
+  turns the check off for a key; `key peers NAME --add/--remove` edits the list afterwards, and
   every entry is checked as the agent reads it (a glob the matcher takes, a requirement
   the framework parses), since the agent treats what it cannot read as unsatisfied and a
   stored typo would refuse every request. What the check is worth: it stops a client that speaks the
@@ -432,7 +433,7 @@ taciturn install | uninstall | status           the LaunchAgent and the socket
 taciturn doctor                                 enclave available, agent loaded, socket mode,
                                                 store permissions, each key loads and its
                                                 public key matches, in one report
-taciturn key create NAME --use locked|unlocked [--peers any]
+taciturn key create NAME --use locked|unlocked --peers ENTRY[,ENTRY]
 taciturn key list [--format console|json|ssh]   ssh: authorized_keys lines, for GitHub
 taciturn key show NAME                          public key, fingerprint, class, policy, last uses
 taciturn key allow NAME --user U --host H --known-hosts FILE
@@ -630,10 +631,15 @@ Each was put as a question with the alternatives; the answer and its reason stan
 2. **The bot key's class is `AfterFirstUnlockThisDeviceOnly`**: it signs while the screen
    is locked, until reboot, so unattended sessions finish their pushes. Same exposure as
    while present, within the policy.
-3. **Peer requirement on by default, naming our ssh fork only** (path under aqua's
-   package directory, the human's root and the sessions'), with Apple's `ssh`/`ssh-keygen`
-   as a named interim allowance until the fork is the sessions' client (it ships P-256
-   since v10.6.1.2). The bot then has exactly one client. `--peers any` per key.
+3. **Peer requirement always on, the list stated per key at creation, no default.**
+   taciturn ships no peer list and keeps no baseline: `key create` refuses without
+   `--peers`, and the installer that configures the client names it, which for the
+   sessions is forkcloser/openssh's `ssh` and `ssh-keygen` by path under the machine's
+   aqua root (the fork ships P-256 since v10.6.1.2). The bot has exactly one client.
+   Until v0.2.1 the list had a compiled default, the fork's pair under both aqua roots
+   plus Apple's `ssh`/`ssh-keygen` as an interim allowance while Apple's ssh was the
+   sessions' client; a default that a release changes is a policy nobody stated, so it
+   went. `--peers any` per key.
 4. **A user-authentication signature on an unbound connection is refused.** Only sshsig
    requests are answered unbound. Breaks no OpenSSH since 8.9; refuses every other client.
 5. **Own protocol loop**, not `x/crypto/ssh/agent.ServeAgent`: a 64 KiB bound, a
@@ -645,8 +651,8 @@ Each was put as a question with the alternatives; the answer and its reason stan
 7. **forkcloser/openssh gains ECDSA P-256** (a LibreSSL build, the config left
    ed25519-only, the sessions naming `ecdsa-sha2-nistp256` alone) and becomes the bot's only
    ssh; `limen-install-agent` points the sessions at the fork's `ssh` and `ssh-keygen` by
-   real path. Requests to the Forkcloser Maintainer and to Limen. Apple's ssh is the
-   interim.
+   real path. Requests to the Forkcloser Maintainer and to Limen, both done. Apple's ssh
+   was the interim.
 8. **The repository is public, MIT; the first PR is `limen bootstrap` plus this
    document**, through The Reviewer; then one PR per package in dependency order
    (`protocol`, `policy`, `keystore`, `enclave`, `agent`, `peer`, `launchd`, `cmd`), the
@@ -766,10 +772,10 @@ its own), and signed with the Apple Development identity.
   install (the LaunchAgent now runs the bundle), `key import`, verify a signature in the
   audit log, done; the sessions see the same key throughout.
 - **Peers by requirement** (follow-up, with forkcloser/openssh): once the fork's `ssh` and
-  `ssh-keygen` carry a Developer ID signature, the default peer entries become
+  `ssh-keygen` carry a Developer ID signature, the entries the installer names become
   requirements, `anchor apple generic and certificate leaf[subject.OU] = "<team>" and
   identifier "org.forkcloser.ssh"` and the same for `ssh-keygen`, in place of the path
-  globs under the aqua roots; the identifiers are the ones the fork's `build.sh` sets today.
+  globs under the aqua root; the identifiers are the ones the fork's `build.sh` sets today.
 - **Testing**: the enclave and agent hardware tests need the entitlement, so a
   `test-hardware` recipe builds each hardware test binary, wraps it in a development
   bundle signed with the Apple Development identity and the development profile at

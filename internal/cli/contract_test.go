@@ -284,7 +284,7 @@ func TestCreateWithoutTheEnclave(t *testing.T) {
 
 	store := filepath.Join(t.TempDir(), "keys")
 
-	code, _, errOut := run(t, "key", "create", "bot", "-store", store, "-use", "locked")
+	code, _, errOut := run(t, "key", "create", "bot", "-store", store, "-use", "locked", "-peers", "any")
 	if code == 0 {
 		t.Skip("the enclave answered: this process is outside the sandbox")
 	}
@@ -301,6 +301,18 @@ func TestCreateWithoutTheEnclave(t *testing.T) {
 	code, _, errOut = run(t, "key", "create", "bot", "-store", store)
 	if code != 1 || !strings.Contains(errOut, "-use") {
 		t.Fatalf("create without -use: exit %d: %s", code, errOut)
+	}
+
+	// Nothing is assumed about who may ask: without -peers the command
+	// refuses before it touches the enclave or the store.
+	code, _, errOut = run(t, "key", "create", "bot", "-store", store, "-use", "locked")
+	if code != 1 || !strings.Contains(errOut, "-peers is required") {
+		t.Fatalf("create without -peers: exit %d: %s", code, errOut)
+	}
+
+	code, out, _ = run(t, "key", "list", "-store", store, "-format", "ssh")
+	if code != 0 || out != "" {
+		t.Fatalf("store after a create without -peers: %q", out)
 	}
 }
 

@@ -63,9 +63,9 @@ type locations struct {
 // macOS, and the LaunchAgent's log directory. A command creates, private,
 // what it uses (docs/design.md, "Keys" and "The socket and the process").
 func resolve() (locations, error) {
-	home := dirs.HomeDir()
-	if home == "" {
-		return locations{}, errHome
+	home, err := dirs.HomeDir()
+	if err != nil {
+		return locations{}, fmt.Errorf("%w: %w", errHome, err)
 	}
 
 	data := filepath.Join(home, "Library", "Application Support", appName)

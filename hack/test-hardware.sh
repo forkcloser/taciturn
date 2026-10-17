@@ -16,7 +16,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-out="$root/build/hardware"
+out="$root/.build/hardware"
 export TACITURN_PROFILE="${TACITURN_PROFILE:-$HOME/Library/MobileDevice/Provisioning Profiles/taciturn-dev.provisionprofile}"
 export TACITURN_SIGN_IDENTITY="${TACITURN_SIGN_IDENTITY:-Apple Development}"
 # No timestamp server for a test bundle: offline, and nothing verifies it later.

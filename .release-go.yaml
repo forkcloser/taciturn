@@ -4,15 +4,15 @@
 # .github/workflows/release.yaml, which runs `just do release --ci` on a macOS
 # runner: goreleaser, keyless cosign over the checksums, a GitHub artifact
 # attestation over every asset. Dry run: `just do release --local --dry-run`
-# (no tag, no publish, artifacts under build/release/).
+# (no tag, no publish, artifacts under .build/release/).
 version: 2
 
 project_name: taciturn
 
-# Under build/, which the canonical .gitignore covers, and a subdirectory of
+# Under .build/, which the canonical .gitignore covers, and a subdirectory of
 # it: goreleaser --clean wipes its dist directory, and the dev builds the
-# other recipes put in build/ must survive a release run.
-dist: build/release
+# other recipes put in .build/ must survive a release run.
+dist: .build/release
 
 # Twin of the `release` recipe in .limen/just/build-go.just — the
 # developer-facing builder. A flag change here must land there too (and vice
@@ -55,7 +55,7 @@ builds:
     # no certificate) the bundle is assembled unsigned.
     hooks:
       post:
-        - cmd: hack/bundle.sh {{ .Path }} build/release/bundle
+        - cmd: hack/bundle.sh {{ .Path }} .build/release/bundle
           env:
             - TACITURN_BUNDLE_VERSION={{ .Version }}
 
@@ -72,11 +72,11 @@ archives:
     # and _CodeSignature (what codesign wrote). hack/bundle.sh signs every
     # bundle, ad hoc without an identity, so the three exist in a dry run too.
     files:
-      - src: build/release/bundle/Taciturn.app/Contents/*
+      - src: .build/release/bundle/Taciturn.app/Contents/*
         dst: Taciturn.app/Contents
-      - src: build/release/bundle/Taciturn.app/Contents/MacOS/*
+      - src: .build/release/bundle/Taciturn.app/Contents/MacOS/*
         dst: Taciturn.app/Contents/MacOS
-      - src: build/release/bundle/Taciturn.app/Contents/_CodeSignature/*
+      - src: .build/release/bundle/Taciturn.app/Contents/_CodeSignature/*
         dst: Taciturn.app/Contents/_CodeSignature
 
 checksum:

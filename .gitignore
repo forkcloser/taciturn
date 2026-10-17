@@ -13,7 +13,7 @@ Desktop.ini
 .claude/
 
 # Build output and Go artifacts
-/build
+/.build
 
 # Scratch / work-in-progress files
 # *.local
@@ -57,6 +57,3 @@ Desktop.ini
 # Audit scratchpads: notes to be evaluated for possible issues, never a
 # deliverable — the findings that survive become code, tests, or the book.
 AUDIT.md
-
-# Required by limen (book/mandatory-files.md, ".gitignore").
-/.build

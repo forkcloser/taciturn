@@ -312,8 +312,8 @@ Per key, stored in its `.json`, set by the CLI:
   ],
   "sshsig": ["git"],
   "peers": [
-    "path=/Users/me/.local/share/aquaproj-aqua/pkgs/github_release/github.com/forkcloser/openssh/*/*/*/bin/ssh",
-    "path=/Users/me/.local/share/aquaproj-aqua/pkgs/github_release/github.com/forkcloser/openssh/*/*/*/bin/ssh-keygen"
+    "path=/Users/me/Library/Application Support/hermetic/store/pkgs/github_release/github.com/forkcloser/openssh/*/*/*/bin/ssh",
+    "path=/Users/me/Library/Application Support/hermetic/store/pkgs/github_release/github.com/forkcloser/openssh/*/*/*/bin/ssh-keygen"
   ]
 }
 ```
@@ -332,7 +332,7 @@ Per key, stored in its `.json`, set by the CLI:
   no compiled default, no stored baseline, no file read at creation. Whoever sets the
   client up names it, which in the fleet is limen-install-agent, since it is what points
   the sessions at forkcloser/openssh's `ssh` and `ssh-keygen` by real path under the
-  machine's aqua root (the fork's binaries carry an ad-hoc signature, so a path is what
+  machine's hermetic store (the fork's binaries carry an ad-hoc signature, so a path is what
   identifies them; the log records the cdhash of every peer, so the build that asked is
   on record). A human creating a key by hand states the list the same way. `--peers any`
   turns the check off for a key; `key peers NAME --add/--remove` edits the list afterwards, and
@@ -396,7 +396,7 @@ none (Secretive passes one only for presence-gated keys).
 - A user LaunchAgent, `org.forkcloser.taciturn`, `RunAtLoad`, `KeepAlive`, running
   `taciturn agent` in the foreground, logs under `~/Library/Logs/org.forkcloser.taciturn/`.
   `taciturn install` writes the plist with the binary's **real** path (launchd starts it
-  with `HOME` and the system `PATH`; an aqua proxy cannot resolve itself there — the
+  with `HOME` and the system `PATH`; a hermetic proxy cannot resolve itself there — the
   openssh fork's lesson) and bootstraps it; `uninstall` boots it out. After an upgrade to
   a new package directory, `taciturn install` again; `limen-install`'s nightly job does
   the same for the ssh agent today and can do it for taciturn.
@@ -485,14 +485,14 @@ revoked in a click, which the book already relies on.
   with keyless cosign and a GitHub artifact attestation, one asset
   `taciturn_<version>_darwin_arm64.tar.gz`, built on the macOS runner with Xcode's clang
   (cgo; the release shape and the `build` recipe kept twins).
-- Pinned on machines through aqua as a `github_release` package with
+- Pinned on machines through hermetic as a `github_release` package with
   `github_artifact_attestations` and the checksum, in `limen-install`'s global config next
   to forkcloser/openssh; Renovate moves the pin; the nightly job ships it and re-runs
   `taciturn install`. The LaunchAgent runs the package's real path.
 - Go's linker ad-hoc signs darwin/arm64 binaries; the enclave works with that (F3), and
   nothing here depends on the signature being stable across builds, which is what makes
   the keychain-less design survive upgrades.
-- No Homebrew formula in v1: aqua is the fleet's path. A formula in `homebrew-brews` is a
+- No Homebrew formula in v1: hermetic is the fleet's path. A formula in `homebrew-brews` is a
   follow-up if a machine outside the rig wants it.
 
 ### Testing
@@ -619,7 +619,8 @@ overlay allows these three.
 
 Presence-gated keys (`.userPresence`); ML-DSA keys; a `restrict-destination` constraint
 accepted from `ssh-add` (the policy is the operator's, not the client's); notifications
-(no app bundle, no `UserNotifications`; the log is the notification); Linux.
+(no `UserNotifications`, no GUI; the log is the notification; revisited after v0.3.0 and
+held, since the first notification is the first step toward a macOS application); Linux.
 
 ## Decisions (Apostasie, 2026-10-12)
 
@@ -636,10 +637,13 @@ Each was put as a question with the alternatives; the answer and its reason stan
    `--peers`, and the installer that configures the client names it, which for the
    sessions is forkcloser/openssh's `ssh` and `ssh-keygen` by path under the machine's
    aqua root (the fork ships P-256 since v10.6.1.2). The bot has exactly one client.
-   Until the release after v0.2.0 the list had a compiled default, the fork's pair under both aqua roots
-   plus Apple's `ssh`/`ssh-keygen` as an interim allowance while Apple's ssh was the
-   sessions' client; a default that a release changes is a policy nobody stated, so it
-   went. `--peers any` per key.
+   Until the release after v0.2.0 the list had a compiled default, the fork's pair under
+   both aqua roots plus Apple's `ssh`/`ssh-keygen` as an interim allowance while Apple's
+   ssh was the sessions' client; a default that a release changes is a policy nobody
+   stated, so it went. The store itself moved from aqua to hermetic with the limen 0.14
+   baseline, and a key created before that keeps its old globs until
+   `key peers NAME --remove` drops them: the operator's edit, not a release's.
+   `--peers any` per key.
 4. **A user-authentication signature on an unbound connection is refused.** Only sshsig
    requests are answered unbound. Breaks no OpenSSH since 8.9; refuses every other client.
 5. **Own protocol loop**, not `x/crypto/ssh/agent.ServeAgent`: a 64 KiB bound, a
@@ -751,7 +755,7 @@ its own), and signed with the Apple Development identity.
 - **The bundle**: the release ships `Taciturn.app/Contents/{Info.plist,
   embedded.provisionprofile, MacOS/taciturn}`; `CFBundleIdentifier` is
   `org.forkcloser.taciturn`, the LaunchAgent label unchanged. It is a command-line tool
-  that happens to live in a bundle: launched by path, never through Launch Services. aqua's
+  that happens to live in a bundle: launched by path, never through Launch Services. The
   registry entry points its `files` at `Taciturn.app/Contents/MacOS/taciturn`; `taciturn
   install` writes the LaunchAgent with that path, resolved as today.
 - **Release lane**: goreleaser builds the binary as now; a post-build hook assembles the
@@ -762,7 +766,7 @@ its own), and signed with the Apple Development identity.
   Developer ID `.provisionprofile`). The workflow imports the certificate into a temporary
   keychain it creates and deletes in the same job, grants `codesign` the partition, and
   never writes the key to disk unencrypted outside that keychain. No notarization in
-  v0.2: aqua downloads without a quarantine attribute and the tool runs by path, so
+  v0.2: hermetic downloads without a quarantine attribute and the tool runs by path, so
   Gatekeeper is not in the path; revisited if it ever is.
 - **Migration**: `taciturn key import` walks the store, moves each v0.1 blob into the
   keychain under the key's fingerprint (F17), checks the public key, signs a test message
@@ -775,7 +779,7 @@ its own), and signed with the Apple Development identity.
   `ssh-keygen` carry a Developer ID signature, the entries the installer names become
   requirements, `anchor apple generic and certificate leaf[subject.OU] = "<team>" and
   identifier "org.forkcloser.ssh"` and the same for `ssh-keygen`, in place of the path
-  globs under the aqua root; the identifiers are the ones the fork's `build.sh` sets today.
+  globs under the hermetic store; the identifiers are the ones the fork's `build.sh` sets today.
 - **Testing**: the enclave and agent hardware tests need the entitlement, so a
   `test-hardware` recipe builds each hardware test binary, wraps it in a development
   bundle signed with the Apple Development identity and the development profile at

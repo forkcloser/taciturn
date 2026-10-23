@@ -517,7 +517,7 @@ bounded walk, a fuzz target, black-box.
   with Go's `crypto/ecdsa`, the class readable from the reloaded key, and a deliberately
   wrong load (no `toid`) shown to produce a different key, so the trap stays documented by
   a test that fails if Apple ever changes it.
-- `agent`, end to end, hardware lane: the agent on a temporary socket, Apple's `ssh -o
+- `agent`, end to end, hardware lane: the agent on a temporary socket, the fork's `ssh -o
   IdentityAgent=` against a local `sshd` (the fork's `sshd` with a test config that accepts
   `ecdsa-sha2-nistp256`), a destination that is allowed and one that is not, a forwarded
   agent over that connection refused, `ssh-keygen -Y sign` and `-Y verify` in an allowed
@@ -527,7 +527,12 @@ bounded walk, a fuzz target, black-box.
   `ssh-keygen -Y verify`, the `file` namespace refused, `ssh-add` of a key refused, and a
   real `ssh -T git@github.com` whose session binding verified against GitHub's ed25519
   host key before GitHub refused the unregistered key; the audit log recorded each. The
-  local-`sshd` leg is still to run once the fork accepts P-256.)*
+  local-`sshd` leg ran 2026-10-22 as `TestLocalSSHD` in the hardware lane: the fork's
+  `sshd` twice on the loopback as the user with fresh host keys, its `ssh` pinned to the
+  agent's key alone; the named destination logged in on a host-bound signature, the
+  unnamed host key got an empty listing and no signature request, and `ssh-add -l` over
+  the forwarded agent was bound as forwarding and saw nothing. The sandbox refuses
+  `sshd`'s privilege separation, so the leg runs where the enclave does.)*
 - The locked-screen claim (F7): a manual procedure in the README, run once at
   implementation and at every macOS major: start a signature in 30 s, lock the screen,
   read the result.

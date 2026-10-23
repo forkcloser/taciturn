@@ -22,6 +22,19 @@ export TACITURN_SIGN_IDENTITY="${TACITURN_SIGN_IDENTITY:-Apple Development}"
 # No timestamp server for a test bundle: offline, and nothing verifies it later.
 export TACITURN_SIGN_TIMESTAMP="${TACITURN_SIGN_TIMESTAMP:-none}"
 
+# The local-sshd leg runs forkcloser/openssh's sshd and ssh from one install
+# directory; hermetic knows where the pinned fork's ssh lives.
+if [ -z "${TACITURN_OPENSSH:-}" ] && command -v hermetic > /dev/null 2>&1; then
+  fork_ssh="$(hermetic which ssh 2> /dev/null || true)"
+  if [ -n "$fork_ssh" ] && [ -x "$(dirname "$fork_ssh")/../sbin/sshd" ]; then
+    TACITURN_OPENSSH="$(cd "$(dirname "$fork_ssh")/.." && pwd)"
+    export TACITURN_OPENSSH
+  fi
+fi
+if [ -z "${TACITURN_OPENSSH:-}" ]; then
+  echo "test-hardware: TACITURN_OPENSSH is unset and hermetic has no forkcloser/openssh; the local-sshd leg will skip" >&2
+fi
+
 if [ ! -f "$TACITURN_PROFILE" ]; then
   echo "test-hardware: no development profile at $TACITURN_PROFILE; the keychain tests will skip" >&2
   unset TACITURN_SIGN_IDENTITY

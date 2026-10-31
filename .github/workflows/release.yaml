@@ -34,6 +34,11 @@ jobs:
     # so the runner that builds it is the platform it runs on.
     runs-on: macos-15
     timeout-minutes: 30
+    # Project line: the signing identity and the profile are the `release`
+    # environment's secrets. Only a v* tag may deploy to it, and it waits for
+    # the owner's approval, so a run on any other ref is refused the secrets
+    # by GitHub, whatever the workflow file on that ref says.
+    environment: release
     permissions:
       # Publish the GitHub release and its assets.
       contents: write
@@ -58,10 +63,12 @@ jobs:
 
       # Project step: the Developer ID identity the bundle is signed with
       # (docs/design.md v0.2). The certificate goes into a keychain made
-      # for this job and deleted at its end, never into the login keychain
-      # and never onto disk unencrypted; the profile is written where
-      # hack/bundle.sh reads it. The three secrets are the ones the design
-      # names; a tag pushed without them fails here, before anything builds.
+      # for this job, never into the login keychain and never onto disk
+      # unencrypted; the profile is written where hack/bundle.sh reads it.
+      # Both are deleted by hack/discard-identity.sh as soon as the bundle
+      # is signed (goreleaser's post-build hook, .release-go.yaml) and again
+      # by the last step. An environment without the three secrets fails
+      # here, before anything builds.
       - name: Signing identity
         env:
           P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
@@ -96,12 +103,11 @@ jobs:
           # shellcheck disable=SC1010 # `do` is just's shared-task namespace, not the shell keyword.
           just do release --ci
 
-      # Project step: the job's keychain and the profile go, success or not.
+      # Project step: the job's keychain and the profile go, success or not;
+      # on success the post-build hook already removed them.
       - name: Remove the signing identity
         if: always()
-        run: |
-          [ -z "${TACITURN_SIGNING_KEYCHAIN:-}" ] || security delete-keychain "$TACITURN_SIGNING_KEYCHAIN" || true
-          rm -f "${TACITURN_PROFILE:-/nonexistent}"
+        run: hack/discard-identity.sh
 
       # Project step: the attestation names every published asset, the
       # checksums file included, so no asset is unattested. It lives in the

@@ -766,11 +766,17 @@ its own), and signed with the Apple Development identity.
 - **Release lane**: goreleaser builds the binary as now; a post-build hook assembles the
   bundle and runs `codesign --sign "Developer ID Application" --options runtime
   --timestamp --entitlements`; the archive carries the bundle. The identity comes from
-  repository secrets: `APPLE_DEVELOPER_ID_P12` (base64 of the `.p12`),
+  the `release` environment's secrets: `APPLE_DEVELOPER_ID_P12` (base64 of the `.p12`),
   `APPLE_DEVELOPER_ID_P12_PASSWORD`, `APPLE_PROVISIONING_PROFILE` (base64 of the
-  Developer ID `.provisionprofile`). The workflow imports the certificate into a temporary
-  keychain it creates and deletes in the same job, grants `codesign` the partition, and
-  never writes the key to disk unencrypted outside that keychain. No notarization in
+  Developer ID `.provisionprofile`). The environment admits deployments from `v*` tags
+  only and waits for the owner's approval, so a workflow on any other ref is refused the
+  secrets whatever its file says; a repository secret would be handed to any workflow in
+  the repository's own context, and `v*` tags are the one ref only the owner can create.
+  The workflow imports the certificate into a keychain it creates for the job, grants
+  `codesign` the partition, never writes the key to disk unencrypted outside that
+  keychain, and deletes the keychain and the profile in the build's post hook, as soon
+  as the bundle is signed and before anything is archived, signed with cosign or
+  published. No notarization in
   v0.2: hermetic downloads without a quarantine attribute and the tool runs by path, so
   Gatekeeper is not in the path; revisited if it ever is.
 - **Migration**: `taciturn key import` walks the store, moves each v0.1 blob into the
@@ -812,6 +818,16 @@ its own), and signed with the Apple Development identity.
     `org.forkcloser.taciturn`; a build without it cannot touch keys and says so.
 17. **The fork's binaries get a Developer ID signature** so peers are named by
     requirement; until then the path entries stand (Forkcloser Maintainer's side).
+
+### Decisions (Apostasie, 2026-10-31)
+
+18. **The signing secrets are the `release` environment's, not the repository's.** A
+    repository secret reaches any workflow run in the repository's own context that
+    names it, so a branch pushed by any write account with an edited workflow could read
+    the Developer ID certificate; the environment admits `v*` tags only, waits for the
+    owner's approval, and the job deletes the keychain and the profile as soon as the
+    bundle is signed. Creating the environment and moving the values is the owner's;
+    the workflow's `environment: release` and the post-build deletion are the lane's.
 
 ## Appendix: the experiments
 

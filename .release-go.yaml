@@ -58,6 +58,10 @@ builds:
         - cmd: hack/bundle.sh {{ .Path }} build/release/bundle
           env:
             - TACITURN_BUNDLE_VERSION={{ .Version }}
+        # The identity has signed the one bundle it is for: the keychain and
+        # the profile go now, before the archive, the cosign signature and
+        # the publish. Nothing to do outside the release workflow.
+        - cmd: hack/discard-identity.sh
 
 # One archive: taciturn_<version>_darwin_arm64.tar.gz, the asset aqua pins,
 # carrying Taciturn.app and nothing else; the bare binary never ships, since

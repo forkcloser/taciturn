@@ -26,8 +26,15 @@ func Available() bool {
 	return false
 }
 
-// Generate is ErrUnavailable: there is no enclave without Security.framework.
-func Generate(Class) (*Key, error) {
+// Generate is ErrUnavailable for a class it would make: there is no
+// enclave without Security.framework. A bad argument is ErrInvalid here as
+// everywhere.
+func Generate(class Class) (*Key, error) {
+	err := validateClass(class)
+	if err != nil {
+		return nil, err
+	}
+
 	return nil, unavailable()
 }
 
@@ -36,18 +43,50 @@ func (k *Key) Store(string) error {
 	return unavailable()
 }
 
-// Load is ErrUnavailable: there is no keychain without Security.framework.
-func Load(string, []byte) (*Key, error) {
+// Load is ErrUnavailable for arguments it would look up: there is no
+// keychain without Security.framework.
+func Load(label string, public []byte) (*Key, error) {
+	err := ValidateLabel(label)
+	if err != nil {
+		return nil, err
+	}
+
+	err = validatePoint(public)
+	if err != nil {
+		return nil, err
+	}
+
 	return nil, unavailable()
 }
 
-// Import is ErrUnavailable: there is no enclave without Security.framework.
-func Import([]byte, []byte, string) (*Key, error) {
+// Import is ErrUnavailable for arguments it would load: there is no
+// enclave without Security.framework.
+func Import(blob, public []byte, label string) (*Key, error) {
+	if len(blob) == 0 {
+		return nil, fmt.Errorf("empty blob: %w", ErrInvalid)
+	}
+
+	err := validatePoint(public)
+	if err != nil {
+		return nil, err
+	}
+
+	err = ValidateLabel(label)
+	if err != nil {
+		return nil, err
+	}
+
 	return nil, unavailable()
 }
 
-// Delete is ErrUnavailable: there is no keychain without Security.framework.
-func Delete(string) error {
+// Delete is ErrUnavailable for a label it would remove: there is no
+// keychain without Security.framework.
+func Delete(label string) error {
+	err := ValidateLabel(label)
+	if err != nil {
+		return err
+	}
+
 	return unavailable()
 }
 

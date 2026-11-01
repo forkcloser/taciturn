@@ -50,6 +50,24 @@ func (k *Key) Close() {
 	k.handle.release()
 }
 
+// validateClass says whether a class is one Generate makes.
+func validateClass(class Class) error {
+	if class != ClassAfterFirstUnlock && class != ClassWhenUnlocked {
+		return fmt.Errorf("class %d: %w", class, ErrInvalid)
+	}
+
+	return nil
+}
+
+// validatePoint says whether bytes are an uncompressed P-256 point.
+func validatePoint(public []byte) error {
+	if len(public) != PointSize || public[0] != 0x04 {
+		return fmt.Errorf("public key of %d bytes: %w", len(public), ErrInvalid)
+	}
+
+	return nil
+}
+
 // ValidateLabel says whether a string can label a key in the keychain:
 // printable, no control characters, within MaxLabel.
 func ValidateLabel(label string) error {

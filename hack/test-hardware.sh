@@ -10,15 +10,16 @@
 #
 #   just test-hardware
 #
-# TACITURN_PROFILE names the development profile (default
+# APPLE_PROVISIONING_PROFILE_PATH names the development profile (default
 # ~/Library/MobileDevice/Provisioning Profiles/taciturn-dev.provisionprofile),
-# TACITURN_SIGN_IDENTITY the identity ("Apple Development" by default).
+# APPLE_SIGN_IDENTITY the identity ("Apple Development" by default); the
+# names are limen's Apple lane's, which hack/bundle.sh reads.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-out="$root/build/hardware"
-export TACITURN_PROFILE="${TACITURN_PROFILE:-$HOME/Library/MobileDevice/Provisioning Profiles/taciturn-dev.provisionprofile}"
-export TACITURN_SIGN_IDENTITY="${TACITURN_SIGN_IDENTITY:-Apple Development}"
+out="$root/.build/hardware"
+export APPLE_PROVISIONING_PROFILE_PATH="${APPLE_PROVISIONING_PROFILE_PATH:-$HOME/Library/MobileDevice/Provisioning Profiles/taciturn-dev.provisionprofile}"
+export APPLE_SIGN_IDENTITY="${APPLE_SIGN_IDENTITY:-Apple Development}"
 # No timestamp server for a test bundle: offline, and nothing verifies it later.
 export TACITURN_SIGN_TIMESTAMP="${TACITURN_SIGN_TIMESTAMP:-none}"
 
@@ -35,9 +36,9 @@ if [ -z "${TACITURN_OPENSSH:-}" ]; then
   echo "test-hardware: TACITURN_OPENSSH is unset and hermetic has no forkcloser/openssh; the local-sshd leg will skip" >&2
 fi
 
-if [ ! -f "$TACITURN_PROFILE" ]; then
-  echo "test-hardware: no development profile at $TACITURN_PROFILE; the keychain tests will skip" >&2
-  unset TACITURN_SIGN_IDENTITY
+if [ ! -f "$APPLE_PROVISIONING_PROFILE_PATH" ]; then
+  echo "test-hardware: no development profile at $APPLE_PROVISIONING_PROFILE_PATH; the keychain tests will skip" >&2
+  unset APPLE_SIGN_IDENTITY
 fi
 
 mkdir -p "$out"

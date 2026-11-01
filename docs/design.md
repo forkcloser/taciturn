@@ -481,10 +481,18 @@ revoked in a click, which the book already relies on.
 
 ### Distribution and install
 
-- Released like the fleet (`book/releasing.md`): a signed tag, the CI lane, goreleaser
-  with keyless cosign and a GitHub artifact attestation, one asset
-  `taciturn_<version>_darwin_arm64.tar.gz`, built on the macOS runner with Xcode's clang
-  (cgo; the release shape and the `build` recipe kept twins).
+- Released like the fleet (`book/releasing.md`): a signed tag, and limen's Apple release
+  lane, `limen-release-apple.yaml` called at a limen commit from `release.yaml`. Its `sign`
+  job, in the `release` environment with a read-only token, runs this project's `package`:
+  the shared `build go release` recipe (cgo, Xcode's clang, on the macOS runner), the
+  bundle signed with the Developer ID identity, one asset
+  `taciturn_<version>_darwin_arm64.tar.gz` carrying `Taciturn.app`. Its `publish` job holds
+  no Apple secret: `verify-assets` checks the archive, its signature and the version it
+  reports, then goreleaser checksums it, signs the checksums keyless with cosign and
+  publishes, and GitHub's build provenance attestation covers the asset and
+  `checksums.txt`. The attestation's signer workflow is the lane's,
+  `farcloser/limen/.github/workflows/limen-release-apple.yaml`, with this repository as
+  the source.
 - Pinned on machines through hermetic as a `github_release` package with
   `github_artifact_attestations` and the checksum, in `limen-install`'s global config next
   to forkcloser/openssh; Renovate moves the pin; the nightly job ships it and re-runs
@@ -763,16 +771,20 @@ its own), and signed with the Apple Development identity.
   that happens to live in a bundle: launched by path, never through Launch Services. The
   registry entry points its `files` at `Taciturn.app/Contents/MacOS/taciturn`; `taciturn
   install` writes the LaunchAgent with that path, resolved as today.
-- **Release lane**: goreleaser builds the binary as now; a post-build hook assembles the
-  bundle and runs `codesign --sign "Developer ID Application" --options runtime
+- **Release lane**: `package <version>` builds the binary, and `hack/bundle.sh` assembles
+  the bundle and runs `codesign --sign "Developer ID Application" --options runtime
   --timestamp --entitlements`; the archive carries the bundle. The identity comes from
-  repository secrets: `APPLE_DEVELOPER_ID_P12` (base64 of the `.p12`),
+  the `release` environment's secrets: `APPLE_DEVELOPER_ID_P12` (base64 of the `.p12`),
   `APPLE_DEVELOPER_ID_P12_PASSWORD`, `APPLE_PROVISIONING_PROFILE` (base64 of the
-  Developer ID `.provisionprofile`). The workflow imports the certificate into a temporary
-  keychain it creates and deletes in the same job, grants `codesign` the partition, and
-  never writes the key to disk unencrypted outside that keychain. No notarization in
-  v0.2: hermetic downloads without a quarantine attribute and the tool runs by path, so
-  Gatekeeper is not in the path; revisited if it ever is.
+  Developer ID `.provisionprofile`). The environment admits deployments from `v*` tags
+  only and waits for the owner's approval, so a workflow on any other ref is refused the
+  secrets whatever its file says; a repository secret would be handed to any workflow in
+  the repository's own context. The lane's `sign` job imports the certificate into a
+  keychain it creates for the job, grants `codesign` the partition, never writes the key
+  to disk unencrypted outside that keychain, deletes the keychain and the profile before
+  the asset leaves the job, and publishes nothing. No notarization: hermetic downloads
+  without a quarantine attribute and the tool runs by path, so Gatekeeper is not in the
+  path, which is the policy's rule for a bundle never launched through Launch Services.
 - **Migration**: `taciturn key import` walks the store, moves each v0.1 blob into the
   keychain under the key's fingerprint (F17), checks the public key, signs a test message
   with the keychain-resident key and verifies it, and only then deletes the blob file: a
@@ -789,7 +801,8 @@ its own), and signed with the Apple Development identity.
   `test-hardware` recipe builds each hardware test binary, wraps it in a development
   bundle signed with the Apple Development identity and the development profile at
   `~/Library/MobileDevice/Provisioning Profiles/taciturn-dev.provisionprofile` (or
-  `TACITURN_DEV_PROFILE`), and runs it; the tests skip where the entitlement is absent, so
+  `APPLE_PROVISIONING_PROFILE_PATH`, the lane's name, which `hack/bundle.sh` reads), and
+  runs it; the tests skip where the entitlement is absent, so
   CI and the sandbox stay green and read nothing they cannot.
 - **Threat model**, amended: "same-user process reads the blob" moves from *can sign* to
   *cannot see the key*; what remains able to sign without the agent is code signed by the
@@ -812,6 +825,16 @@ its own), and signed with the Apple Development identity.
     `org.forkcloser.taciturn`; a build without it cannot touch keys and says so.
 17. **The fork's binaries get a Developer ID signature** so peers are named by
     requirement; until then the path entries stand (Forkcloser Maintainer's side).
+
+### Decisions (Apostasie, 2026-11-01)
+
+18. **The release runs on limen's Apple lane, and the signing secrets are the `release`
+    environment's.** A repository secret reaches any workflow run in the repository's own
+    context that names it, so a branch pushed by any write account with an edited
+    workflow could read the Developer ID certificate. The lane's `sign` job holds the
+    environment's secrets with a read-only token and publishes nothing; its `publish` job
+    holds no Apple secret. The environment, `v*` tags only with the owner as required
+    reviewer, is `limen github fix`'s to build; the secret values are set by hand.
 
 ## Appendix: the experiments
 

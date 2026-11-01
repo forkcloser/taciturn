@@ -5,14 +5,15 @@
 #   hack/bundle.sh <binary> <output directory> [<executable name>]
 #
 # The bundle is <output directory>/Taciturn.app with Contents/Info.plist,
-# Contents/MacOS/<name> and, when TACITURN_PROFILE names a provisioning
-# profile, Contents/embedded.provisionprofile. With TACITURN_SIGN_IDENTITY
-# set (a codesign identity: "Developer ID Application" in the release lane,
-# "Apple Development" for the hardware tests) the bundle is signed with the
-# entitlements the profile grants: application-identifier, team-identifier
-# and keychain-access-groups, all read from the profile so no team
-# identifier lives in the tree. Without an identity the bundle is left
-# unsigned, which is what a dry run on a machine without a certificate gets.
+# Contents/MacOS/<name> and, when APPLE_PROVISIONING_PROFILE_PATH names a
+# provisioning profile, Contents/embedded.provisionprofile. With
+# APPLE_SIGN_IDENTITY set (a codesign identity: "Developer ID Application"
+# in the release lane, "Apple Development" for the hardware tests) the bundle
+# is signed with the entitlements the profile grants: application-identifier,
+# team-identifier and keychain-access-groups, all read from the profile so no
+# team identifier lives in the tree. The two names are limen's Apple lane's
+# (.limen/just/apple.just). Without an identity the bundle is signed ad hoc,
+# which is what a dry run on a machine without a certificate gets.
 set -euo pipefail
 
 binary="${1:-}"
@@ -56,19 +57,19 @@ cat > "$app/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
-profile="${TACITURN_PROFILE:-}"
-identity="${TACITURN_SIGN_IDENTITY:-}"
+profile="${APPLE_PROVISIONING_PROFILE_PATH:-}"
+identity="${APPLE_SIGN_IDENTITY:-}"
 
 if [ -z "$identity" ]; then
   # No identity: an ad hoc signature, so the bundle has the shape a signed
   # one has (Contents/_CodeSignature) and a dry run archives the same tree
   # a release does. It carries no entitlements and reaches no keychain.
   codesign --force --sign - "$app"
-  echo "hack/bundle.sh: $app assembled, signed ad hoc (TACITURN_SIGN_IDENTITY unset)"
+  echo "hack/bundle.sh: $app assembled, signed ad hoc (APPLE_SIGN_IDENTITY unset)"
   exit 0
 fi
 
-[ -f "$profile" ] || { echo "hack/bundle.sh: TACITURN_PROFILE must name the provisioning profile" >&2; exit 2; }
+[ -f "$profile" ] || { echo "hack/bundle.sh: APPLE_PROVISIONING_PROFILE_PATH must name the provisioning profile" >&2; exit 2; }
 cp "$profile" "$app/Contents/embedded.provisionprofile"
 
 # The entitlements come from the profile: what it grants is what the bundle

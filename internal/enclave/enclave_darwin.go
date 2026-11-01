@@ -305,15 +305,14 @@ func Available() bool {
 // Generate makes a new transient key in the enclave with the class. It
 // exists in this process alone until Store puts it in the keychain.
 func Generate(class Class) (*Key, error) {
-	var afterFirstUnlock C.int
+	err := validateClass(class)
+	if err != nil {
+		return nil, err
+	}
 
-	switch class {
-	case ClassAfterFirstUnlock:
+	var afterFirstUnlock C.int
+	if class == ClassAfterFirstUnlock {
 		afterFirstUnlock = 1
-	case ClassWhenUnlocked:
-		afterFirstUnlock = 0
-	default:
-		return nil, fmt.Errorf("class %d: %w", class, ErrInvalid)
 	}
 
 	var cerr C.taciturn_error
@@ -493,14 +492,6 @@ func Delete(label string) error {
 		C.taciturn_status(status, &cerr)
 
 		return classify("deleting key", cerr)
-	}
-
-	return nil
-}
-
-func validatePoint(public []byte) error {
-	if len(public) != PointSize || public[0] != 0x04 {
-		return fmt.Errorf("public key of %d bytes: %w", len(public), ErrInvalid)
 	}
 
 	return nil

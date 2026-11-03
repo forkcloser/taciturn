@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   limen:
-    uses: farcloser/limen/.github/workflows/limen-verify.yaml@1c4b3524b4b86e2df3ea7bacc10671a6397d28d1 # v0.23.0
+    uses: farcloser/limen/.github/workflows/limen-verify.yaml@2d32ac07f60aa31045e91d8db6515d86ad0f07e1 # v0.23.1
     permissions:
       contents: read
     # darwin/arm64 only: the agent is cgo against Security.framework and the

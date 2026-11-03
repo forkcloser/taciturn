@@ -55,7 +55,7 @@ unit: (_banner "test go" "unit") _prepare (_go-tool "gotestsum" "gotest.tools/go
 # legs run the detector natively; any other probe failure is real. No go.mod
 # at all: says so and passes, like fuzz, since CI runs this in every
 # repository.
-race: (_banner "test go" "race") _prepare (_go-tool "gotestsum" "gotest.tools/gotestsum")
+race: (_banner "test go" "race") _prepare (_go-tool "gotestsum" "gotest.tools/gotestsum" "go.mod")
     #!/usr/bin/env bash
     set -euo pipefail
     if [ ! -f go.mod ]; then

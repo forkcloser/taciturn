@@ -48,15 +48,14 @@ checksum:
 #     checksums.txt
 # or `gh attestation verify <asset> --repo forkcloser/taciturn`.
 signs:
-  - cmd: cosign
+  - cmd: just
     artifacts: checksum
     signature: "${artifact}.sigstore.json"
     args:
-      - sign-blob
-      - --yes
-      - --bundle
-      - "${signature}"
+      - do
+      - release-sign
       - "${artifact}"
+      - "${signature}"
 
 release:
   extra_files:

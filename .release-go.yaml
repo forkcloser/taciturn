@@ -46,7 +46,10 @@ checksum:
 #     --certificate-identity-regexp \
 #       'https://github.com/farcloser/limen/\.github/workflows/limen-release-apple\.yaml@.*' \
 #     checksums.txt
-# or `gh attestation verify <asset> --repo forkcloser/taciturn`.
+# or, without cosign, naming the reusable workflow that signed, since gh
+# otherwise expects a signer in the repository itself:
+#   gh attestation verify <asset> --repo forkcloser/taciturn \
+#     --signer-workflow farcloser/limen/.github/workflows/limen-release-apple.yaml
 signs:
   - cmd: just
     artifacts: checksum

@@ -43,8 +43,8 @@ package version:
     echo "package: $asset"
 
 # What .build/assets/ holds is one archive of the version, and the bundle in
-# it is signed (Developer ID and timestamped in GitHub Actions, ad hoc
-# locally) and reports that version.
+# it is signed (Developer ID and timestamped on a release run, ad hoc
+# otherwise) and reports that version.
 verify-assets version:
     #!/usr/bin/env bash
     set -euo pipefail

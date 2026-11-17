@@ -822,6 +822,9 @@ func keyRotate(loc locations, args []string, stdout, stderr io.Writer) error {
 		return storeError(err)
 	}
 
+	// The argument may be the fingerprint; the name is the record's.
+	name = current.Name
+
 	if current.Retired != nil {
 		return fmt.Errorf("%s: %w", name, errRetired)
 	}

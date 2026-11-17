@@ -1,9 +1,10 @@
 // The contract of package cli, through Run alone: the exit codes (0 done,
 // 1 refused or failed, 2 usage), the key commands over a store of the
 // test's making, the allowed-signers line, the known_hosts reading, the
-// audit log rendering. What needs the enclave (create, rotate) or launchd
-// (install, status) is exercised on the machine, not here: in the sandbox
-// those commands fail at the enclave, which the tests assert.
+// audit log rendering. What needs the enclave and the keychain (create,
+// rotate, delete of a real key) is hardware_test.go, on the hardware lane;
+// here, in the sandbox, those commands fail at the enclave, which the tests
+// assert. What needs launchd (install, status) is exercised on the machine.
 package cli_test
 
 import (
@@ -286,6 +287,12 @@ func TestCreateWithoutTheEnclave(t *testing.T) {
 
 	code, _, errOut := run(t, "key", "create", "bot", "-store", store, "-use", "locked", "-peers", "any")
 	if code == 0 {
+		// On the hardware lane the key is real: it leaves the keychain
+		// before the test steps aside.
+		if code, _, errOut = run(t, "key", "delete", "bot", "-store", store, "-yes"); code != 0 {
+			t.Fatalf("deleting the key the enclave made: exit %d: %s", code, errOut)
+		}
+
 		t.Skip("the enclave answered: this process is outside the sandbox")
 	}
 

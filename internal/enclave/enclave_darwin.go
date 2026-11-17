@@ -54,7 +54,7 @@ static CFStringRef taciturn_string(const char *text) {
 // taciturn_access_groups writes this process's own keychain-access-groups
 // entitlement into buf, one entry per line: the count of entries written,
 // 0 when the process carries no such entitlement (a build outside the
-// signed bundle, docs/design.md v0.2).
+// signed bundle, docs/design.md "Keys").
 static int taciturn_access_groups(char *buf, size_t length) {
 	buf[0] = 0;
 	SecTaskRef task = SecTaskCreateFromSelf(NULL);

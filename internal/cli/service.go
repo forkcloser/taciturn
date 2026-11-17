@@ -346,6 +346,7 @@ type auditRecord struct {
 	Name    string    `json:"name"`
 	Key     string    `json:"key"`
 	Rule    string    `json:"rule"`
+	Error   string    `json:"error"`
 	Data    string    `json:"data"`
 	User    string    `json:"user"`
 	Host    string    `json:"host"`
@@ -480,8 +481,16 @@ func printRecord(stdout io.Writer, line string, asJSON bool, keyName string) {
 		}
 	}
 
-	if record.Rule != "" {
+	// The rule that decided, then what failed when something did: a
+	// request the policy allowed and the enclave refused has both, and
+	// without the second it reads as a refusal by the rule that allowed it.
+	switch {
+	case record.Rule != "" && record.Error != "":
+		fields = append(fields, "-", shown(record.Rule)+":", shown(record.Error))
+	case record.Rule != "":
 		fields = append(fields, "-", shown(record.Rule))
+	case record.Error != "":
+		fields = append(fields, "-", shown(record.Error))
 	}
 
 	_, _ = fmt.Fprintln(stdout, strings.Join(fields, " "))

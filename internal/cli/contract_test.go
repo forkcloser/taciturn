@@ -478,6 +478,29 @@ func TestLogFieldsKeepTheirPlace(t *testing.T) {
 	}
 }
 
+// A request that failed says what failed, after the rule: the enclave's
+// refusal of a signature the policy allowed, the store's of a listing.
+func TestLogShowsWhatFailed(t *testing.T) {
+	t.Parallel()
+
+	audit := filepath.Join(t.TempDir(), "audit.log")
+	lines := `{"time":"2026-10-12T16:00:01Z","msg":"request","outcome":"refuse","request":"sign","name":"bot","data":"sshsig","peer_path":"/usr/bin/ssh-keygen","rule":"SSHSIG within an allowed namespace","error":"enclave: signing: OSStatus -25308: secure enclave refused"}
+{"time":"2026-10-12T16:00:02Z","msg":"request","outcome":"refuse","request":"identities","error":"key store unreadable"}
+`
+
+	if err := os.WriteFile(audit, []byte(lines), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, _ := run(t, "log", "-audit", audit)
+	if code != 0 ||
+		out != "2026-10-12T16:00:01Z refuse sign bot sshsig /usr/bin/ssh-keygen - SSHSIG within an allowed namespace: "+
+			"enclave: signing: OSStatus -25308: secure enclave refused\n"+
+			"2026-10-12T16:00:02Z refuse identities - key store unreadable\n" {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
 // The peers of a key are edited one entry at a time, each checked as the
 // agent will read it: a relative or malformed path glob and a requirement
 // the framework does not parse are refused before anything is stored.

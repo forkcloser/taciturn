@@ -182,7 +182,12 @@ func (s *Server) Serve(ctx context.Context) error {
 // Close stops the listener, unlinks the socket and releases the lock.
 // Connections in flight finish on their own.
 func (s *Server) Close() error {
+	// Serve closes the listener itself when its context ends: closed
+	// already is the state Close is asked for.
 	err := s.listener.Close()
+	if errors.Is(err, net.ErrClosed) {
+		err = nil
+	}
 
 	if unlockErr := flock.Unlock(s.lock); unlockErr != nil && err == nil {
 		err = unlockErr

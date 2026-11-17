@@ -184,7 +184,7 @@ func start(t *testing.T) *rig {
 			t.Errorf("Serve: %v", err)
 		}
 
-		if err := server.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		if err := server.Close(); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	})
@@ -302,6 +302,55 @@ func TestListenRefusals(t *testing.T) {
 	info, err := os.Stat(filepath.Join(dir, "a.sock"))
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("socket mode: %v %v", info, err)
+	}
+}
+
+// A stop is clean when the context ends: Serve returns nil, Close after it
+// returns nil, the socket file is gone and the lock is free for the next
+// agent.
+func TestStopIsClean(t *testing.T) {
+	t.Parallel()
+
+	dir := shortDir(t)
+
+	store, err := keystore.Open(filepath.Join(dir, "keys"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	socket := filepath.Join(dir, "a.sock")
+
+	server, err := agent.Listen(socket, agent.Config{Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+
+	go func() { done <- server.Serve(ctx) }()
+
+	cancel()
+
+	if err = <-done; err != nil {
+		t.Fatalf("Serve after its context ended: %v", err)
+	}
+
+	if err = server.Close(); err != nil {
+		t.Fatalf("Close after Serve returned: %v", err)
+	}
+
+	if _, err = os.Lstat(socket); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the socket file after Close: %v", err)
+	}
+
+	next, err := agent.Listen(socket, agent.Config{Store: store})
+	if err != nil {
+		t.Fatalf("the next agent on the socket: %v", err)
+	}
+
+	if err = next.Close(); err != nil {
+		t.Fatalf("Close without Serve: %v", err)
 	}
 }
 

@@ -122,8 +122,6 @@ func Listen(path string, config Config) (*Server, error) {
 		return nil, fmt.Errorf("securing %s: %w", path, err)
 	}
 
-	listener.SetUnlinkOnClose(true)
-
 	return &Server{
 		config:   config,
 		listener: listener,

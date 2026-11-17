@@ -357,6 +357,127 @@ not json at all
 	}
 }
 
+// The console view prints one line per record whatever the record holds: a
+// field with a newline, an escape sequence, a bidirectional override or
+// bytes that are not UTF-8 is quoted with those escaped, in a record and in
+// a line that is not one; -json passes every line through as written.
+func TestLogConsoleCannotBeForged(t *testing.T) {
+	t.Parallel()
+
+	audit := filepath.Join(t.TempDir(), "audit.log")
+	forged := `git\n2026-10-12T16:00:09Z allow sign bot`
+	lines := `{"time":"2026-10-12T16:00:01Z","msg":"request","outcome":"refuse","request":"sign","name":"bot","user":"` + forged + `","peer_path":"/tmp/\u001b[2Jx","rule":"peer not allowed"}
+{"time":"2026-10-12T16:00:02Z","msg":"request","outcome":"refuse","request":"sign","user":"a\u202eb"}
+{"time":"2026-10-12T16:00:03Z","msg":"agent\tstarted"}
+raw ` + "\x1b[31m" + ` line
+raw ` + "\x9b31m" + ` line
+`
+
+	if err := os.WriteFile(audit, []byte(lines), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, _ := run(t, "log", "-audit", audit)
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+
+	if strings.Count(out, "\n") != 5 {
+		t.Fatalf("five lines in are five lines out:\n%q", out)
+	}
+
+	if strings.ContainsAny(out, "\x1b\u202e\t") || strings.Contains(out, "\x9b") {
+		t.Fatalf("a control character reached the console:\n%q", out)
+	}
+
+	for _, want := range []string{
+		`2026-10-12T16:00:01Z refuse sign bot "git\n2026-10-12T16:00:09Z allow sign bot" "/tmp/\x1b[2Jx" - peer not allowed`,
+		`2026-10-12T16:00:02Z refuse sign "a\u202eb"`,
+		`2026-10-12T16:00:03Z "agent\tstarted"`,
+		`"raw \x1b[31m line"`,
+		`"raw \x9b31m line"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("log lacks %q:\n%s", want, out)
+		}
+	}
+
+	code, out, _ = run(t, "log", "-audit", audit, "-json")
+	if code != 0 || out != lines {
+		t.Fatalf("-json is every line as written: exit %d:\n%q", code, out)
+	}
+
+	code, out, _ = run(t, "log", "-audit", audit, "-json", "-key", "bot")
+	if code != 0 || out != strings.SplitAfter(lines, "\n")[0] {
+		t.Fatalf("-json -key is that key's lines as written: exit %d:\n%q", code, out)
+	}
+}
+
+// A field's place on the line is its own: one that holds a space, a quote
+// or a backslash is quoted, so a client cannot spread its user or its path
+// over the places of fields its record does not have. Each pair below would
+// otherwise print one and the same line.
+func TestLogFieldsKeepTheirPlace(t *testing.T) {
+	t.Parallel()
+
+	record := func(fields string) string {
+		return `{"time":"2026-10-12T16:00:01Z","msg":"request","outcome":"allow","request":"sign","name":"bot","data":"userauth",` + fields + "}\n"
+	}
+
+	for name, pair := range map[string][2]string{
+		"a user holding the host": {
+			record(`"user":"git","host":"github.com","peer_path":"/usr/bin/ssh","rule":"peer allowed"`),
+			record(`"user":"git github.com","peer_path":"/usr/bin/ssh","rule":"peer allowed"`),
+		},
+		"a path holding the rule": {
+			record(`"user":"git","peer_path":"/usr/bin/ssh","rule":"peer allowed"`),
+			record(`"user":"git","peer_path":"/usr/bin/ssh - peer allowed"`),
+		},
+		"a user that looks quoted": {
+			record(`"user":"git github.com","peer_path":"/usr/bin/ssh"`),
+			record(`"user":"\"git github.com\"","peer_path":"/usr/bin/ssh"`),
+		},
+		"a user that looks escaped": {
+			record(`"user":"a\nb","peer_path":"/usr/bin/ssh"`),
+			record(`"user":"\"a\\nb\"","peer_path":"/usr/bin/ssh"`),
+		},
+	} {
+		var printed [2]string
+
+		for i, line := range pair {
+			audit := filepath.Join(t.TempDir(), "audit.log")
+			if err := os.WriteFile(audit, []byte(line), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			code, out, _ := run(t, "log", "-audit", audit)
+			if code != 0 || strings.Count(out, "\n") != 1 {
+				t.Fatalf("%s: exit %d:\n%q", name, code, out)
+			}
+
+			printed[i] = out
+		}
+
+		if printed[0] == printed[1] {
+			t.Fatalf("%s: two records print one line: %q", name, printed[0])
+		}
+	}
+
+	audit := filepath.Join(t.TempDir(), "audit.log")
+	if err := os.WriteFile(
+		audit,
+		[]byte(record(`"user":"git github.com","peer_path":"/Library/Application Support/ssh","rule":"peer allowed"`)),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	_, out, _ := run(t, "log", "-audit", audit)
+	if out != `2026-10-12T16:00:01Z allow sign bot userauth "git github.com" "/Library/Application Support/ssh" - peer allowed`+"\n" {
+		t.Fatalf("the quoted fields: %q", out)
+	}
+}
+
 // The peers of a key are edited one entry at a time, each checked as the
 // agent will read it: a relative or malformed path glob and a requirement
 // the framework does not parse are refused before anything is stored.

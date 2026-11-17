@@ -11,8 +11,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/forkcloser/taciturn/internal/agent"
 	"github.com/forkcloser/taciturn/internal/enclave"
@@ -405,13 +407,50 @@ func tail(ctx context.Context, reader *bufio.Reader, stdout io.Writer, follow, a
 	}
 }
 
+// shown is a string as the console prints it: itself when every rune is
+// printable, quoted with the rest escaped when not. A record carries bytes
+// the client chose (the user of an authentication request, the path of its
+// executable); printed raw, a newline in one starts a line the agent never
+// wrote, and an escape sequence drives the reader's terminal.
+func shown(text string) string {
+	if !utf8.ValidString(text) {
+		return strconv.Quote(text)
+	}
+
+	for _, r := range text {
+		if !strconv.IsPrint(r) {
+			return strconv.Quote(text)
+		}
+	}
+
+	return text
+}
+
+// field is one of a record's fields among the others on its line. The
+// fields are separated by spaces, so one that holds a space would read as
+// two, and a client could give its record the look of another: it is quoted
+// too, and so is one holding a quote or a backslash, which keeps a quoted
+// field apart from one that only looks quoted.
+func field(text string) string {
+	if strings.ContainsAny(text, " \"\\") {
+		return strconv.Quote(text)
+	}
+
+	return shown(text)
+}
+
 func printRecord(stdout io.Writer, line string, asJSON bool, keyName string) {
 	var record auditRecord
 	if err := json.Unmarshal([]byte(line), &record); err != nil {
-		// A line that is not a record is shown as it is, unless the reader
-		// asked for one key's records, which it is not.
-		if keyName == "" {
+		// A line that is not a record is none of a key's; otherwise it is
+		// passed through under -json like any other, and shown on the
+		// console.
+		switch {
+		case keyName != "":
+		case asJSON:
 			_, _ = fmt.Fprintln(stdout, line)
+		default:
+			_, _ = fmt.Fprintln(stdout, shown(line))
 		}
 
 		return
@@ -428,21 +467,21 @@ func printRecord(stdout io.Writer, line string, asJSON bool, keyName string) {
 	}
 
 	if record.Message != "request" {
-		_, _ = fmt.Fprintf(stdout, "%s %s\n", record.Time.Format(time.RFC3339), record.Message)
+		_, _ = fmt.Fprintf(stdout, "%s %s\n", record.Time.Format(time.RFC3339), shown(record.Message))
 
 		return
 	}
 
-	fields := []string{record.Time.Format(time.RFC3339), record.Outcome, record.Request}
+	fields := []string{record.Time.Format(time.RFC3339), field(record.Outcome), field(record.Request)}
 
-	for _, field := range []string{record.Name, record.Data, record.User, record.Host, record.Peer} {
-		if field != "" {
-			fields = append(fields, field)
+	for _, value := range []string{record.Name, record.Data, record.User, record.Host, record.Peer} {
+		if value != "" {
+			fields = append(fields, field(value))
 		}
 	}
 
 	if record.Rule != "" {
-		fields = append(fields, "-", record.Rule)
+		fields = append(fields, "-", shown(record.Rule))
 	}
 
 	_, _ = fmt.Fprintln(stdout, strings.Join(fields, " "))

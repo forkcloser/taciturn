@@ -16,7 +16,9 @@ type Identity struct {
 	// Identifier is the code signature's identifier; an ad-hoc signature's
 	// is the file's name, and proves nothing.
 	Identifier string `json:"identifier,omitempty"`
-	// CDHash is the code directory hash, hex: the build that connected.
+	// CDHash is the code directory hash, hex. It and Identifier are read
+	// from the code at Path: the build that connected, unless the file was
+	// replaced since. They are for the log; a requirement is what decides.
 	CDHash string `json:"cdhash,omitempty"`
 	// ValidSignature says the code matches its signature.
 	ValidSignature bool `json:"validSignature"`

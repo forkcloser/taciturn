@@ -484,18 +484,23 @@ func keyShow(loc locations, args []string, stdout, stderr io.Writer) error {
 	return printData(*kind, []*format.Data{describeRecord(record)}, stdout)
 }
 
-// update applies a change to a key's record and writes it back.
+// update applies a change to a key's record, in the store's own edit. An
+// error of the change comes back as the change made it; one of the store is
+// wrapped as the store's.
 func update(store *keystore.Store, name string, change func(*keystore.Record) error) (keystore.Record, error) {
-	record, err := store.Lookup(name)
+	var refused error
+
+	record, err := store.Edit(name, func(record *keystore.Record) error {
+		refused = change(record)
+
+		return refused
+	})
+
+	if refused != nil {
+		return keystore.Record{}, refused
+	}
+
 	if err != nil {
-		return keystore.Record{}, storeError(err)
-	}
-
-	if err = change(&record); err != nil {
-		return keystore.Record{}, err
-	}
-
-	if err = store.Update(record); err != nil {
 		return keystore.Record{}, storeError(err)
 	}
 
@@ -833,35 +838,25 @@ func keyRotate(loc locations, args []string, stdout, stderr io.Writer) error {
 
 	defer key.Close()
 
-	successor.Predecessor = current.Fingerprint
-
 	if err = key.Store(successor.Fingerprint); err != nil {
 		return fmt.Errorf("keychain: %w", err)
 	}
 
-	// The successor takes the name, so the current key gives it up first;
-	// a store that then refuses the successor gets the current key back as
-	// it was and the successor leaves the keychain, so a failed rotation
-	// leaves nothing renamed and nothing dangling.
-	before := current
-	current.Name = name + rotatedNameSep + successor.Created.Format(dateLayout)
-	current.Successor = successor.Fingerprint
+	// The successor takes the name and the current key gives it up in one
+	// step of the store's, under its lock: the successor gets the policy
+	// the key holds by then, and a key rotated or retired since the lookup
+	// above is refused. A rotation the store refuses leaves nothing
+	// renamed, and its successor leaves the keychain.
+	renamed := name + rotatedNameSep + successor.Created.Format(dateLayout)
 
-	if err = store.Update(current); err != nil {
+	rotated, written, err := store.Rotate(current, renamed, successor)
+	if err != nil {
 		_ = enclave.Delete(successor.Fingerprint)
 
 		return storeError(err)
 	}
 
-	if err = store.Create(successor); err != nil {
-		_ = enclave.Delete(successor.Fingerprint)
-
-		if restore := store.Update(before); restore != nil {
-			return fmt.Errorf("%w; and %s stays renamed %s: %w", storeError(err), name, current.Name, restore)
-		}
-
-		return storeError(err)
-	}
+	current, successor = rotated, written
 
 	_, _ = fmt.Fprintf(stdout, "rotated: %s is now %s %s; %s is %s, still served\n%s\n",
 		name, successor.Fingerprint, successor.Class, current.Name, current.Fingerprint, authorizedKey(successor))

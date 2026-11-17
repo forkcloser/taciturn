@@ -114,40 +114,75 @@ func (s *Store) Create(record Record) error {
 	})
 }
 
-// Update rewrites a key's record. The key must exist; the fingerprint
-// names it, and the fingerprint is the public key, so the key itself cannot
-// change. Renaming to a name another key holds is ErrExists.
-func (s *Store) Update(record Record) error {
-	if err := record.validate(); err != nil {
-		return err
+// Edit changes one key's record, named by its name or its fingerprint. The
+// record is read, handed to change and written back under the store's lock,
+// so of two edits at once neither is lost. change may alter anything but
+// the key: a record that comes back with another fingerprint or public key
+// is ErrInvalid. A name another key holds is ErrExists, a key not in the
+// store ErrNotFound; an error from change is returned as it is. Nothing is
+// written unless all of it holds. The record as written is returned.
+func (s *Store) Edit(nameOrFingerprint string, change func(*Record) error) (Record, error) {
+	byFingerprint := strings.HasPrefix(nameOrFingerprint, fingerprintPrefix)
+
+	check := ValidateName
+	if byFingerprint {
+		check = ValidateFingerprint
 	}
 
-	return s.locked(func() error {
-		records, err := s.readAll()
-		if err != nil {
-			return err
-		}
+	if err := check(nameOrFingerprint); err != nil {
+		return Record{}, err
+	}
 
-		found := false
+	var edited Record
 
-		for _, existing := range records {
-			if existing.Fingerprint == record.Fingerprint {
-				found = true
+	err := s.locked(func() error {
+		var err error
 
-				continue
-			}
+		edited, err = s.editLocked(nameOrFingerprint, byFingerprint, change)
 
-			if existing.Name == record.Name {
-				return fmt.Errorf("name %q: %w", record.Name, ErrExists)
-			}
-		}
-
-		if !found {
-			return fmt.Errorf("key %s: %w", record.Fingerprint, ErrNotFound)
-		}
-
-		return s.writeRecord(record)
+		return err
 	})
+	if err != nil {
+		return Record{}, err
+	}
+
+	return edited, nil
+}
+
+// Rotate hands a key's name to its successor, both records written under
+// the store's lock. current is the key as the caller looked it up: the
+// store's record of it must still carry that name and that successor, or
+// the key was rotated or renamed since and the rotation is ErrExists, so of
+// two rotations at once one is refused and writes nothing. The key takes
+// the name renamed and the successor's fingerprint; the successor's record
+// is written with the name the key gave up, the key as its predecessor and
+// the key's policy as the store holds it now, so an edit made since the
+// lookup is the successor's too. A retired key is ErrInvalid, a name or a
+// key already in the store ErrExists, a key not in the store ErrNotFound;
+// nothing is written unless all of it holds. Should the successor's record
+// fail to be written, the key's is put back as it was. The two records as
+// written are returned, the key's first.
+func (s *Store) Rotate(current Record, renamed string, successor Record) (rotated, written Record, err error) {
+	if err = ValidateFingerprint(current.Fingerprint); err != nil {
+		return Record{}, Record{}, err
+	}
+
+	if err = ValidateName(renamed); err != nil {
+		return Record{}, Record{}, err
+	}
+
+	err = s.locked(func() error {
+		var failed error
+
+		rotated, written, failed = s.rotateLocked(current, renamed, successor)
+
+		return failed
+	})
+	if err != nil {
+		return Record{}, Record{}, err
+	}
+
+	return rotated, written, nil
 }
 
 // Delete removes a key's record, and the v0.1 blob file beside it when one
@@ -307,6 +342,127 @@ func (s *Store) locked(fn func() error) error {
 	}
 
 	return nil
+}
+
+// editLocked is Edit's read, change and write; the caller holds the lock.
+func (s *Store) editLocked(handle string, byFingerprint bool, change func(*Record) error) (Record, error) {
+	records, err := s.readAll()
+	if err != nil {
+		return Record{}, err
+	}
+
+	current, found := named(records, handle, byFingerprint)
+	if !found {
+		return Record{}, fmt.Errorf("key %s: %w", handle, ErrNotFound)
+	}
+
+	edited := current
+
+	if err := change(&edited); err != nil {
+		return Record{}, err
+	}
+
+	if edited.Fingerprint != current.Fingerprint {
+		return Record{}, fmt.Errorf("an edit cannot change the key %s: %w", current.Fingerprint, ErrInvalid)
+	}
+
+	if err := edited.validate(); err != nil {
+		return Record{}, err
+	}
+
+	for _, existing := range records {
+		if existing.Fingerprint != current.Fingerprint && existing.Name == edited.Name {
+			return Record{}, fmt.Errorf("name %q: %w", edited.Name, ErrExists)
+		}
+	}
+
+	if err := s.writeRecord(edited); err != nil {
+		return Record{}, err
+	}
+
+	return edited, nil
+}
+
+// rotateLocked is Rotate's read, checks and two writes; the caller holds
+// the lock.
+func (s *Store) rotateLocked(looked Record, renamed string, successor Record) (rotated, written Record, err error) {
+	records, err := s.readAll()
+	if err != nil {
+		return Record{}, Record{}, err
+	}
+
+	held, err := rotatable(records, looked, renamed)
+	if err != nil {
+		return Record{}, Record{}, err
+	}
+
+	successor.Name = held.Name
+	successor.Policy = held.Policy
+	successor.Predecessor = held.Fingerprint
+
+	if err = successor.validate(); err != nil {
+		return Record{}, Record{}, err
+	}
+
+	if _, found := named(records, successor.Fingerprint, true); found {
+		return Record{}, Record{}, fmt.Errorf("key %s: %w", successor.Fingerprint, ErrExists)
+	}
+
+	rotated = held
+	rotated.Name = renamed
+	rotated.Successor = successor.Fingerprint
+
+	if err = s.writeRecord(rotated); err != nil {
+		return Record{}, Record{}, err
+	}
+
+	if err = s.writeRecord(successor); err != nil {
+		if restore := s.writeRecord(held); restore != nil {
+			return Record{}, Record{}, fmt.Errorf(
+				"%w; and key %s stays renamed %s: %w", err, held.Fingerprint, renamed, restore,
+			)
+		}
+
+		return Record{}, Record{}, err
+	}
+
+	return rotated, successor, nil
+}
+
+// rotatable is the key a rotation is about, as the store holds it: still as
+// the caller looked it up, not retired, and its new name free.
+func rotatable(records []Record, looked Record, renamed string) (Record, error) {
+	held, found := named(records, looked.Fingerprint, true)
+	if !found {
+		return Record{}, fmt.Errorf("key %s: %w", looked.Fingerprint, ErrNotFound)
+	}
+
+	if held.Name != looked.Name || held.Successor != looked.Successor {
+		return Record{}, fmt.Errorf(
+			"key %s was rotated or renamed since it was looked up: %w", held.Fingerprint, ErrExists,
+		)
+	}
+
+	if held.Retired != nil {
+		return Record{}, fmt.Errorf("key %s is retired: %w", held.Name, ErrInvalid)
+	}
+
+	if other, taken := named(records, renamed, false); taken && other.Fingerprint != held.Fingerprint {
+		return Record{}, fmt.Errorf("name %q: %w", renamed, ErrExists)
+	}
+
+	return held, nil
+}
+
+// named is the record a name, or a fingerprint, names among records.
+func named(records []Record, handle string, byFingerprint bool) (Record, bool) {
+	for _, record := range records {
+		if (byFingerprint && record.Fingerprint == handle) || (!byFingerprint && record.Name == handle) {
+			return record, true
+		}
+	}
+
+	return Record{}, false
 }
 
 // readAll reads every record and checks that a v0.1 blob file, where one

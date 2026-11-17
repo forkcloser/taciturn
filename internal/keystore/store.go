@@ -287,9 +287,22 @@ func (s *Store) recordPath(fingerprint string) string {
 	return filepath.Join(s.dir, fileID(fingerprint)+recordSuffix)
 }
 
-// locked runs fn holding the store's write lock.
+// locked runs fn holding the store's write lock. What fn returns comes
+// back as it is; only a failure of the lock is reported as one.
 func (s *Store) locked(fn func() error) error {
-	if err := flock.WithLock(filepath.Join(s.dir, lockName), fn); err != nil {
+	var result error
+
+	err := flock.WithLock(filepath.Join(s.dir, lockName), func() error {
+		result = fn()
+
+		return nil
+	})
+
+	if result != nil {
+		return result
+	}
+
+	if err != nil {
 		return fmt.Errorf("key store lock: %w", err)
 	}
 

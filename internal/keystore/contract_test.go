@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -186,7 +187,10 @@ func TestCreateRefusesDuplicates(t *testing.T) {
 	}
 
 	other, _ := key(t, "bot", 2)
-	if err := store.Create(other); !errors.Is(err, keystore.ErrExists) {
+
+	// A refusal made while the lock is held is the store's, not the lock's.
+	err := store.Create(other)
+	if err == nil || !errors.Is(err, keystore.ErrExists) || strings.Contains(err.Error(), "lock") {
 		t.Fatalf("same name, other key: %v", err)
 	}
 

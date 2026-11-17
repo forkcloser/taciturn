@@ -285,6 +285,16 @@ func TestParseUserauthRequest(t *testing.T) {
 			str([]byte("ecdsa-sha2-nistp256")),
 			str(keyBlob),
 		),
+		"signature flag that is true and not 1": cat(
+			str(sessID),
+			[]byte{50},
+			str([]byte("git")),
+			str([]byte("ssh-connection")),
+			str([]byte("publickey")),
+			[]byte{2},
+			str([]byte("ecdsa-sha2-nistp256")),
+			str(keyBlob),
+		),
 		"host-bound with an empty host key": cat(
 			str(sessID),
 			[]byte{50},

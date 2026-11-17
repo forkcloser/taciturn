@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/ssh/knownhosts"
+
 	"github.com/forkcloser/taciturn/internal/cli"
 	"github.com/forkcloser/taciturn/internal/keystore"
 	"github.com/forkcloser/taciturn/internal/policy"
@@ -229,7 +231,7 @@ func TestPolicyEdits(t *testing.T) {
 }
 
 // key allow reads a known_hosts file line by line: the host's plain,
-// and bracketed entries are its keys; a marker line is not; a line
+// hashed and bracketed entries are its keys; a marker line is not; a line
 // that cannot be read hides none after it, and is reported when it is the
 // host's own.
 func TestKnownHostsReading(t *testing.T) {
@@ -242,7 +244,7 @@ func TestKnownHostsReading(t *testing.T) {
 	lines := []string{
 		"broken.example ssh-ed25519 not-base64",
 		"plain.example " + key,
-		"# the hashed form comes next",
+		knownhosts.HashHostname("hashed.example") + " " + key,
 		"[ported.example]:2222 " + key,
 		"@cert-authority marked.example " + key,
 		"mixed.example ssh-unknown AAAA",
@@ -259,7 +261,7 @@ func TestKnownHostsReading(t *testing.T) {
 		return run(t, "key", "allow", "bot", "-store", store, "-user", "git", "-host", host, "-known-hosts", knownHosts)
 	}
 
-	for _, host := range []string{"plain.example", "ported.example", "[ported.example]:2222", "other.example"} {
+	for _, host := range []string{"plain.example", "hashed.example", "ported.example", "[ported.example]:2222", "other.example"} {
 		code, out, errOut := allow(host)
 		if code != 0 || !strings.Contains(out, host+" as git (1 host keys)") || errOut != "" {
 			t.Fatalf("allow %s: exit %d: %s %s", host, code, out, errOut)
@@ -278,6 +280,7 @@ func TestKnownHostsReading(t *testing.T) {
 		"marked.example":     "no host keys",
 		"broken.example":     "line 1",
 		"unreadable.example": "line 8",
+		"hashed":             "no host keys",
 		"absent.example":     "no host keys",
 	} {
 		code, _, errOut = allow(host)

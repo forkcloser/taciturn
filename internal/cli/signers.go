@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha1" // #nosec G505 -- the hash OpenSSH's known_hosts format fixes for a host name
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -45,11 +47,11 @@ func allowedSigner(principal string, record keystore.Record) string {
 }
 
 // hostKeysFrom reads the host's keys out of a known_hosts file: every entry
-// naming the host exactly, plain or bracketed with a port; a marker line
-// (@cert-authority, @revoked) is not a host key. Each line is read on its
-// own. One x/crypto does not read is left out, and skipped names it when it
-// is the host's: the agent verifies a binding with x/crypto too, so such a
-// key could never be bound to.
+// naming the host exactly, plain, hashed (HashKnownHosts) or bracketed with
+// a port; a marker line (@cert-authority, @revoked) is not a host key. Each
+// line is read on its own. One x/crypto does not read is left out, and
+// skipped names it when it is the host's: the agent verifies a binding with
+// x/crypto too, so such a key could never be bound to.
 func hostKeysFrom(path, host string) (keys [][]byte, skipped []string, err error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- the operator's -known-hosts flag
 	if err != nil {
@@ -102,10 +104,45 @@ func unreadHosts(line []byte) []string {
 // names says whether one of a line's host entries is the host.
 func names(entries []string, host string) bool {
 	for _, entry := range entries {
-		if entry == host || strings.HasPrefix(entry, "["+host+"]:") {
+		if entry == host || strings.HasPrefix(entry, "["+host+"]:") || hashedIs(entry, host) {
 			return true
 		}
 	}
 
 	return false
+}
+
+// The hashed form of a known_hosts entry, sshd(8) SSH_KNOWN_HOSTS FILE
+// FORMAT: "|1|", the salt and HMAC-SHA1 of the host name under it, both
+// base64.
+const (
+	hashedPrefix = "|1|"
+	hashedParts  = 2
+)
+
+func hashedIs(entry, host string) bool {
+	rest, ok := strings.CutPrefix(entry, hashedPrefix)
+	if !ok {
+		return false
+	}
+
+	parts := strings.Split(rest, "|")
+	if len(parts) != hashedParts {
+		return false
+	}
+
+	salt, err := base64.StdEncoding.DecodeString(parts[0])
+	if err != nil {
+		return false
+	}
+
+	want, err := base64.StdEncoding.DecodeString(parts[1])
+	if err != nil {
+		return false
+	}
+
+	mac := hmac.New(sha1.New, salt)
+	mac.Write([]byte(host))
+
+	return hmac.Equal(mac.Sum(nil), want)
 }

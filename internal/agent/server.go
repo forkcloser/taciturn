@@ -91,8 +91,12 @@ func Listen(path string, config Config) (*Server, error) {
 	}
 
 	lock, err := flock.TryLock(path + lockSuffix)
-	if err != nil {
+	if errors.Is(err, flock.ErrLockWouldBlock) {
 		return nil, fmt.Errorf("agent lock %s: %w", path+lockSuffix, ErrBusy)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("agent lock %s: %w", path+lockSuffix, err)
 	}
 
 	if err = removeStaleSocket(path); err != nil {

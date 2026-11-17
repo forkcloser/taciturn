@@ -120,6 +120,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"unsafe"
 
@@ -258,6 +259,11 @@ func (i *Identity) Satisfies(requirement string) (bool, error) {
 		return ok, nil
 	}
 
+	err := wholeForC(requirement)
+	if err != nil {
+		return false, err
+	}
+
 	text := C.CString(requirement)
 	defer C.free(unsafe.Pointer(text))
 
@@ -275,11 +281,27 @@ func (i *Identity) Satisfies(requirement string) (bool, error) {
 	}
 }
 
+// wholeForC refuses a requirement holding a NUL: the C string would end
+// there, and the framework would parse and evaluate a shorter requirement
+// than the one the policy stores.
+func wholeForC(requirement string) error {
+	if strings.ContainsRune(requirement, 0) {
+		return fmt.Errorf("requirement %q holds a NUL: %w", requirement, ErrInvalid)
+	}
+
+	return nil
+}
+
 // ValidRequirement says whether the framework parses the text as a code
 // requirement, without any code to evaluate it on: ErrInvalid when it does
 // not. The agent treats an unparsable entry as unsatisfied, so this is
 // what lets a policy edit refuse a typo instead of storing it.
 func ValidRequirement(requirement string) error {
+	err := wholeForC(requirement)
+	if err != nil {
+		return err
+	}
+
 	text := C.CString(requirement)
 	defer C.free(unsafe.Pointer(text))
 

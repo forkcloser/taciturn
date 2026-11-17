@@ -109,15 +109,15 @@ func Run(version string, args []string, stdout, stderr io.Writer) int {
 	case "agent":
 		err = runAgent(ctx, args[1:], stderr)
 	case "install":
-		err = runInstall(ctx, args[1:], stdout)
+		err = runInstall(ctx, args[1:], stdout, stderr)
 	case "uninstall":
-		err = runUninstall(ctx, args[1:], stdout)
+		err = runUninstall(ctx, args[1:], stdout, stderr)
 	case "status":
-		err = runStatus(ctx, args[1:], stdout)
+		err = runStatus(ctx, args[1:], stdout, stderr)
 	case "doctor":
 		return runDoctor(ctx, args[1:], stdout, stderr)
 	case "log":
-		err = runLog(ctx, args[1:], stdout)
+		err = runLog(ctx, args[1:], stdout, stderr)
 	case "key":
 		err = runKey(args[1:], stdout, stderr)
 	case "version", "-v", "--version":

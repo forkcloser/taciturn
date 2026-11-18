@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Wrap a taciturn binary in Taciturn.app and sign it (docs/design.md, v0.2):
+# Wrap a taciturn binary in Taciturn.app and sign it (docs/design.md,
+# "Distribution"):
 #
 #   hack/bundle.sh <binary> <output directory> [<executable name>]
 #

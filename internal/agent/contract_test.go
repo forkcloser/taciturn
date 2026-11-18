@@ -239,8 +239,10 @@ func requirePeerIdentity(t *testing.T) {
 
 	defer func() { _ = server.Close() }()
 
+	// Only a build without the framework may skip: where it is linked, a
+	// peer that cannot be identified is the defect these tests exist for.
 	identity, err := peer.Identify(server)
-	if errors.Is(err, peer.ErrUnavailable) {
+	if errors.Is(err, peer.ErrUnavailable) && !haveFramework {
 		t.Skipf("peer identity unavailable here: %v", err)
 	}
 

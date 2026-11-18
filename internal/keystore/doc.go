@@ -24,6 +24,7 @@
 // filesystem underneath is returned as it came.
 //
 // Limits: a name is 1 to MaxNameLength characters of letters, digits, '.',
-// '_', '@' and '-', not starting with '.' or '-'; a v0.1 blob is at most
+// '_', '@' and '-', not starting with '.' or '-'; a record file is at most
+// 64 KiB, and one larger is ErrCorrupt unread; a v0.1 blob is at most
 // MaxBlob bytes (an enclave blob is a few hundred).
 package keystore

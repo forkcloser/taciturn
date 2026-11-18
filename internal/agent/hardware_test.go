@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/forkcloser/taciturn/internal/enclave"
+	"github.com/forkcloser/taciturn/internal/policy"
 	"github.com/forkcloser/taciturn/internal/protocol"
 )
 
@@ -23,7 +24,7 @@ func TestSignEndToEnd(t *testing.T) {
 		t.Skipf("no keychain access group, the test binary is not in the signed bundle: %v", err)
 	}
 
-	r := start(t)
+	r, log := logged(t)
 	h := newHost(t)
 
 	made, err := enclave.Generate(enclave.ClassAfterFirstUnlock)
@@ -72,6 +73,18 @@ func TestSignEndToEnd(t *testing.T) {
 
 	if err = keys[0].Verify(data, signature); err != nil {
 		t.Fatalf("the agent's signature does not verify: %v", err)
+	}
+
+	// The listing, the binding and the signature: the third record is the
+	// allowed one, with no error on it.
+	allowed := log.last(t, 3)
+	expect(t, allowed, map[string]any{
+		"outcome": "allow", "request": "sign", "rule": policy.RuleAllowedAuth,
+		"key": record.Fingerprint, "name": "bot", "data": "userauth", "user": "git",
+	})
+
+	if _, failed := allowed["error"]; failed {
+		t.Fatalf("an allowed signature with an error on record: %v", allowed)
 	}
 
 	if _, err = client.Sign(keys[0], userauth(sessionID(), "root", public)); err == nil {

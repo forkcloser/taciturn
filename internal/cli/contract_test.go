@@ -239,11 +239,17 @@ func TestKnownHostsReading(t *testing.T) {
 
 	const key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
 
+	// Another key, under names that only begin as plain.example does or
+	// that it begins with: neither is plain.example's.
+	other, _ := hostKey(t)
+
 	store, _ := seed(t, "bot")
 	knownHosts := filepath.Join(t.TempDir(), "known_hosts")
 	lines := []string{
 		"broken.example ssh-ed25519 not-base64",
 		"plain.example " + key,
+		"plain.example.other " + other,
+		"plain.exampl " + other,
 		knownhosts.HashHostname("hashed.example") + " " + key,
 		"[ported.example]:2222 " + key,
 		"@cert-authority marked.example " + key,
@@ -271,7 +277,7 @@ func TestKnownHostsReading(t *testing.T) {
 	// Its unreadable key is reported, once; its unreadable marker line,
 	// which was never a host key, is not.
 	code, out, errOut := allow("mixed.example")
-	if code != 0 || !strings.Contains(out, "(1 host keys)") || !strings.Contains(errOut, "line 6") ||
+	if code != 0 || !strings.Contains(out, "(1 host keys)") || !strings.Contains(errOut, "line 8") ||
 		strings.Count(errOut, "left out") != 1 {
 		t.Fatalf("a host with one readable and one unreadable key: exit %d: %s %s", code, out, errOut)
 	}
@@ -279,7 +285,7 @@ func TestKnownHostsReading(t *testing.T) {
 	for host, reason := range map[string]string{
 		"marked.example":     "no host keys",
 		"broken.example":     "line 1",
-		"unreadable.example": "line 8",
+		"unreadable.example": "line 10",
 		"hashed":             "no host keys",
 		"absent.example":     "no host keys",
 	} {

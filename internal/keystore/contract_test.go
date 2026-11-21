@@ -12,6 +12,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -383,6 +384,45 @@ func TestListIsOldestFirst(t *testing.T) {
 
 	if len(list) != 3 || list[0].Name != "k1" || list[1].Name != "k2" || list[2].Name != "k3" {
 		t.Fatalf("%+v", list)
+	}
+}
+
+// A record file is read up to the bound, 64 KiB, and refused past it,
+// before a byte of it is decoded.
+func TestRecordFileBound(t *testing.T) {
+	t.Parallel()
+
+	const bound = 64 * 1024
+
+	store := open(t)
+	record, _ := key(t, "bot", 1)
+
+	if err := store.Create(record); err != nil {
+		t.Fatal(err)
+	}
+
+	written, err := os.ReadFile(recordFile(store, record))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// JSON takes any amount of white space after the value.
+	padded := slices.Concat(written, bytes.Repeat([]byte{' '}, bound-len(written)))
+	if err = os.WriteFile(recordFile(store, record), padded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.Get(record.Fingerprint)
+	if err != nil || !sameRecord(got, record) {
+		t.Fatalf("a record file of exactly the bound: %v", err)
+	}
+
+	if err = os.WriteFile(recordFile(store, record), append(padded, ' '), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = store.Get(record.Fingerprint); !errors.Is(err, keystore.ErrCorrupt) {
+		t.Fatalf("a record file one byte over the bound: %v", err)
 	}
 }
 

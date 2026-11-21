@@ -1,8 +1,8 @@
 // The contract of package peer is its package comment, held to this
 // process connecting to itself over a unix socket: the kernel answers for
 // the peer's uid and pid, the framework for its path and signature. The
-// tests need Security.framework and skip, saying so, where Identify says
-// it is unavailable.
+// tests need Security.framework and skip, saying so, in a build without
+// it; in a build with it, an Identify that fails fails the test.
 package peer_test
 
 import (
@@ -49,8 +49,10 @@ func selfConnection(t *testing.T) *net.UnixConn {
 func identifySelf(t *testing.T) *peer.Identity {
 	t.Helper()
 
+	// Only a build without the framework may skip: where it is linked, a
+	// peer that cannot be identified is the defect these tests exist for.
 	identity, err := peer.Identify(selfConnection(t))
-	if errors.Is(err, peer.ErrUnavailable) {
+	if errors.Is(err, peer.ErrUnavailable) && !haveFramework {
 		t.Skipf("peer identity unavailable here: %v", err)
 	}
 

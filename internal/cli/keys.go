@@ -522,19 +522,13 @@ func keyAllow(loc locations, args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("%w: -user, -host and -known-hosts", errArgument)
 	}
 
-	hostKeys, skipped, err := hostKeysFrom(*knownHosts, *host)
+	hostKeys, leftOut, err := hostKeysFrom(*knownHosts, *host)
 	if err != nil {
 		return err
 	}
 
-	for _, line := range skipped {
-		_, _ = fmt.Fprintf(
-			stderr,
-			"taciturn: %s names %s with a key that cannot be read, left out: %s\n",
-			*knownHosts,
-			*host,
-			line,
-		)
+	for _, line := range leftOut {
+		_, _ = fmt.Fprintf(stderr, "taciturn: %s: a key of %s is left out: %s\n", *knownHosts, *host, line)
 	}
 
 	store, err := openStore(*storePath)

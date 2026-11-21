@@ -1,9 +1,10 @@
 // The contract of package cli, through Run alone: the exit codes (0 done,
 // 1 refused or failed, 2 usage), the key commands over a store of the
 // test's making, the allowed-signers line, the known_hosts reading, the
-// audit log rendering. What needs the enclave (create, rotate) or launchd
-// (install, status) is exercised on the machine, not here: in the sandbox
-// those commands fail at the enclave, which the tests assert.
+// audit log rendering. What needs the enclave and the keychain (create,
+// rotate, delete of a real key) is hardware_test.go, on the hardware lane;
+// here, in the sandbox, those commands fail at the enclave, which the tests
+// assert. What needs launchd (install, status) is exercised on the machine.
 package cli_test
 
 import (
@@ -17,6 +18,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/forkcloser/taciturn/internal/cli"
 	"github.com/forkcloser/taciturn/internal/keystore"
@@ -227,6 +230,66 @@ func TestPolicyEdits(t *testing.T) {
 	}
 }
 
+// key allow reads a known_hosts file line by line: the host's plain,
+// hashed and bracketed entries are its keys; a marker line is not; a line
+// that cannot be read hides none after it, and is reported when it is the
+// host's own.
+func TestKnownHostsReading(t *testing.T) {
+	t.Parallel()
+
+	const key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+
+	store, _ := seed(t, "bot")
+	knownHosts := filepath.Join(t.TempDir(), "known_hosts")
+	lines := []string{
+		"broken.example ssh-ed25519 not-base64",
+		"plain.example " + key,
+		knownhosts.HashHostname("hashed.example") + " " + key,
+		"[ported.example]:2222 " + key,
+		"@cert-authority marked.example " + key,
+		"mixed.example ssh-unknown AAAA",
+		"mixed.example,other.example " + key,
+		"unreadable.example ssh-unknown AAAA",
+		"@revoked mixed.example ssh-unknown AAAA",
+	}
+
+	if err := os.WriteFile(knownHosts, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	allow := func(host string) (int, string, string) {
+		return run(t, "key", "allow", "bot", "-store", store, "-user", "git", "-host", host, "-known-hosts", knownHosts)
+	}
+
+	for _, host := range []string{"plain.example", "hashed.example", "ported.example", "[ported.example]:2222", "other.example"} {
+		code, out, errOut := allow(host)
+		if code != 0 || !strings.Contains(out, host+" as git (1 host keys)") || errOut != "" {
+			t.Fatalf("allow %s: exit %d: %s %s", host, code, out, errOut)
+		}
+	}
+
+	// Its unreadable key is reported, once; its unreadable marker line,
+	// which was never a host key, is not.
+	code, out, errOut := allow("mixed.example")
+	if code != 0 || !strings.Contains(out, "(1 host keys)") || !strings.Contains(errOut, "line 6") ||
+		strings.Count(errOut, "left out") != 1 {
+		t.Fatalf("a host with one readable and one unreadable key: exit %d: %s %s", code, out, errOut)
+	}
+
+	for host, reason := range map[string]string{
+		"marked.example":     "no host keys",
+		"broken.example":     "line 1",
+		"unreadable.example": "line 8",
+		"hashed":             "no host keys",
+		"absent.example":     "no host keys",
+	} {
+		code, _, errOut = allow(host)
+		if code != 1 || !strings.Contains(errOut, "no host keys") || !strings.Contains(errOut, reason) {
+			t.Fatalf("allow %s: exit %d: %s", host, code, errOut)
+		}
+	}
+}
+
 func TestSignersRetireDelete(t *testing.T) {
 	t.Parallel()
 
@@ -286,6 +349,12 @@ func TestCreateWithoutTheEnclave(t *testing.T) {
 
 	code, _, errOut := run(t, "key", "create", "bot", "-store", store, "-use", "locked", "-peers", "any")
 	if code == 0 {
+		// On the hardware lane the key is real: it leaves the keychain
+		// before the test steps aside.
+		if code, _, errOut = run(t, "key", "delete", "bot", "-store", store, "-yes"); code != 0 {
+			t.Fatalf("deleting the key the enclave made: exit %d: %s", code, errOut)
+		}
+
 		t.Skip("the enclave answered: this process is outside the sandbox")
 	}
 

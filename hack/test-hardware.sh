@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # The hardware lanes, on a Mac, outside any sandbox (docs/design.md,
-# "Testing", v0.2): the enclave and agent tests need the Secure Enclave and,
+# "Testing", v0.2): the enclave, agent and cli tests need the Secure Enclave and,
 # for the keychain, the keychain-access-groups entitlement, which only a
 # signed bundle with a provisioning profile carries. Each package's test
 # binary is built, wrapped in a bundle signed with the Apple Development
@@ -43,7 +43,7 @@ fi
 
 mkdir -p "$out"
 status=0
-for pkg in enclave agent; do
+for pkg in enclave agent cli; do
   dir="$out/$pkg"
   rm -rf "$dir"
   mkdir -p "$dir"

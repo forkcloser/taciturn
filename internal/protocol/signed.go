@@ -35,7 +35,7 @@ type UserauthRequest struct {
 // ParseUserauthRequest decodes signed data as a user-authentication request.
 // Data of any other shape, a wrong message number, a service other than
 // ssh-connection, a method other than publickey or its host-bound form, a
-// signature flag that is not set, an empty session identifier, a host-bound
+// signature flag that is not 1, an empty session identifier, a host-bound
 // request with an empty host key, is ErrInvalid.
 func ParseUserauthRequest(data []byte) (UserauthRequest, error) {
 	input := newReader(data)
@@ -117,13 +117,16 @@ func userauthMethod(input *reader) (string, error) {
 		return "", fmt.Errorf("userauth method %q: %w", method, ErrInvalid)
 	}
 
-	signatureFollows, err := input.bool()
+	// TRUE is written 1, and OpenSSH's agent takes nothing else here
+	// (ssh-agent.c, parse_userauth_request): a request no client builds
+	// is not one to sign.
+	signatureFollows, err := input.byte()
 	if err != nil {
 		return "", fmt.Errorf("userauth signature flag: %w", err)
 	}
 
-	if !signatureFollows {
-		return "", fmt.Errorf("userauth request without a signature: %w", ErrInvalid)
+	if signatureFollows != 1 {
+		return "", fmt.Errorf("userauth signature flag %d: %w", signatureFollows, ErrInvalid)
 	}
 
 	return method, nil

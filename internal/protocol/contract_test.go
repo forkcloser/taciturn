@@ -171,8 +171,12 @@ func TestWriteToFramesAndRoundTrips(t *testing.T) {
 	}
 
 	oversized := protocol.Message{Type: protocol.TypeIdentitiesAnswer, Payload: make([]byte, protocol.MaxMessage)}
-	if _, err := oversized.WriteTo(io.Discard); !errors.Is(err, protocol.ErrTooLarge) {
-		t.Fatalf("over-size write: %v", err)
+	// Refused whole: nothing is written, and the count says so.
+	var refused bytes.Buffer
+
+	n, err = oversized.WriteTo(&refused)
+	if !errors.Is(err, protocol.ErrTooLarge) || n != 0 || refused.Len() != 0 {
+		t.Fatalf("over-size write: n=%d, %d bytes written, %v", n, refused.Len(), err)
 	}
 }
 

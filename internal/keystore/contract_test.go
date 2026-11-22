@@ -641,13 +641,26 @@ func TestLegacyBlob(t *testing.T) {
 	}
 }
 
+// List is by age, oldest first, whatever the names and the order of
+// creation in the store; keys of one instant come by name.
 func TestListIsOldestFirst(t *testing.T) {
 	t.Parallel()
 
 	store := open(t)
 
-	for _, seed := range []byte{3, 1, 2} {
-		record, _ := key(t, "k"+string(rune('0'+seed)), seed)
+	// The names run against the ages, so that neither order passes for
+	// the other.
+	for seed, name := range map[byte]string{3: "a", 1: "z", 2: "m"} {
+		record, _ := key(t, name, seed)
+		if err := store.Create(record); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for seed, name := range map[byte]string{8: "tie-b", 9: "tie-a"} {
+		record, _ := key(t, name, seed)
+		record.Created = created.Add(time.Hour)
+
 		if err := store.Create(record); err != nil {
 			t.Fatal(err)
 		}
@@ -658,8 +671,13 @@ func TestListIsOldestFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(list) != 3 || list[0].Name != "k1" || list[1].Name != "k2" || list[2].Name != "k3" {
-		t.Fatalf("%+v", list)
+	var names []string
+	for _, record := range list {
+		names = append(names, record.Name)
+	}
+
+	if strings.Join(names, " ") != "z m a tie-a tie-b" {
+		t.Fatalf("listed %v", names)
 	}
 }
 

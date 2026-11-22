@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 
 	"github.com/forkcloser/taciturn/internal/peer"
@@ -98,9 +99,14 @@ func TestIdentifySelf(t *testing.T) {
 	}
 
 	// The test binary carries the linker's ad-hoc signature: valid, with
-	// the file's name as its identifier, and a cdhash.
-	if !identity.ValidSignature || identity.Identifier == "" || identity.CDHash == "" {
+	// the file's name as its identifier, and a cdhash, the 20 bytes the
+	// kernel keeps of the code directory's digest, in hex.
+	if !identity.ValidSignature || identity.Identifier == "" {
 		t.Fatalf("signature: %+v", identity)
+	}
+
+	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(identity.CDHash) {
+		t.Fatalf("cdhash %q", identity.CDHash)
 	}
 }
 
@@ -115,6 +121,16 @@ func TestParentsAreAboveThePeer(t *testing.T) {
 
 	if len(identity.Parents) > peer.MaxParents {
 		t.Fatalf("%d parents", len(identity.Parents))
+	}
+
+	// The chain stops below launchd, pid 1, everyone's ancestor. A parent
+	// is named by the path of its executable where the system gives it: the
+	// nearest one, which started this process, always; one outside a
+	// sandbox this process runs in, not.
+	for i, parent := range identity.Parents {
+		if parent.PID <= 1 || (parent.Path != "" && !filepath.IsAbs(parent.Path)) || (i == 0 && parent.Path == "") {
+			t.Fatalf("parent %+v in %+v", parent, identity.Parents)
+		}
 	}
 }
 

@@ -15,8 +15,187 @@ import (
 	sshagent "golang.org/x/crypto/ssh/agent"
 
 	"github.com/forkcloser/taciturn/internal/cli"
+	"github.com/forkcloser/taciturn/internal/enclave"
 	"github.com/forkcloser/taciturn/internal/keystore"
 )
+
+// The usage is printed where the caller looks for it: on stdout when it
+// was asked for, on stderr with the reason when the command line is wrong.
+func TestUsage(t *testing.T) {
+	t.Parallel()
+
+	const head = "taciturn: an ssh-agent for keys in the Secure Enclave"
+
+	for name, c := range map[string]struct {
+		args   []string
+		code   int
+		stdout string
+		stderr string
+	}{
+		"help":                {[]string{"help"}, 0, head, ""},
+		"-h":                  {[]string{"-h"}, 0, head, ""},
+		"no arguments":        {nil, 2, "", head},
+		"unknown command":     {[]string{"frobnicate"}, 2, "", `unknown command "frobnicate"`},
+		"key without command": {[]string{"key"}, 2, "", head},
+		"unknown key command": {[]string{"key", "frobnicate"}, 2, "", `unknown key command "frobnicate"`},
+	} {
+		code, out, errOut := run(t, c.args...)
+		if code != c.code || !strings.Contains(out, c.stdout) || !strings.Contains(errOut, c.stderr) {
+			t.Fatalf("%s: exit %d, stdout %q, stderr %q", name, code, out, errOut)
+		}
+
+		if (c.stdout == "") != (out == "") || (c.stderr == "") != (errOut == "") {
+			t.Fatalf("%s: stdout %q, stderr %q", name, out, errOut)
+		}
+
+		// A wrong command line is told the usage as well as the reason.
+		if c.code == 2 && !strings.Contains(errOut, "taciturn key create NAME") {
+			t.Fatalf("%s: no usage on stderr: %q", name, errOut)
+		}
+	}
+}
+
+// Every command refuses what it cannot act on, before it acts: a missing
+// name or a missing required flag is a failure that names it, a store that
+// cannot be opened or a key that is not in it a failure of the store.
+func TestCommandsRefuseBadArguments(t *testing.T) {
+	t.Parallel()
+
+	store, _ := seed(t, "bot")
+
+	notAStore := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notAStore, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	knownHosts := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(
+		knownHosts,
+		[]byte("h ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// The agent's own files, should it get as far as making them.
+	scratch := shortDir(t)
+
+	// Each command with the arguments that make it complete, a name first
+	// where it takes one.
+	named := map[string][]string{
+		"show":     nil,
+		"allow":    {"-user", "git", "-host", "h", "-known-hosts", knownHosts},
+		"disallow": {"-host", "h"},
+		"peers":    nil,
+		"sshsig":   {"-namespace", "git"},
+		"delete":   {"-yes"},
+		"rotate":   nil,
+		"retire":   nil,
+		"signers":  {"-principal", "bot@example"},
+	}
+
+	for command, flags := range named {
+		code, out, errOut := run(t, "key", command)
+		if code != 1 || !strings.Contains(errOut, "a key name is required") || out != "" {
+			t.Fatalf("key %s without a name: exit %d: %q %q", command, code, out, errOut)
+		}
+
+		code, out, errOut = run(t, append([]string{"key", command, "bot", "-store", notAStore}, flags...)...)
+		if code != 1 || !strings.Contains(errOut, "key store") || out != "" {
+			t.Fatalf("key %s on what is not a store: exit %d: %q %q", command, code, out, errOut)
+		}
+
+		code, out, errOut = run(t, append([]string{"key", command, "absent", "-store", store}, flags...)...)
+		if code != 1 || !strings.Contains(errOut, "key not found") || out != "" {
+			t.Fatalf("key %s of an absent key: exit %d: %q %q", command, code, out, errOut)
+		}
+	}
+
+	for name, c := range map[string]struct {
+		args []string
+		code int
+		want string
+	}{
+		"create without a name":    {[]string{"key", "create"}, 1, "a key name is required"},
+		"create with a bad use":    {[]string{"key", "create", "new", "-store", store, "-use", "sometimes", "-peers", "any"}, 1, "-use must be"},
+		"create with a bad name":   {[]string{"key", "create", "-new", "-use", "locked"}, 1, "a key name is required"},
+		"create with a bad peer":   {[]string{"key", "create", "new", "-store", store, "-use", "locked", "-peers", "any,path=relative"}, 1, "invalid peer entry"},
+		"create with a taken name": {[]string{"key", "create", "b/d", "-store", store, "-use", "locked", "-peers", "any"}, 1, "invalid key record"},
+		"create on no store":       {[]string{"key", "create", "new", "-store", notAStore, "-use", "locked", "-peers", "any"}, 1, "key store"},
+		"agent on no store": {
+			[]string{"agent", "-store", notAStore, "-socket", filepath.Join(scratch, "a.sock"), "-audit", filepath.Join(scratch, "audit.log")},
+			1, "key store",
+		},
+		"agent, no socket directory": {
+			[]string{"agent", "-store", store, "-socket", filepath.Join(notAStore, "a.sock"), "-audit", filepath.Join(scratch, "audit.log")},
+			1, "creating",
+		},
+		"list on no store":        {[]string{"key", "list", "-store", notAStore}, 1, "key store"},
+		"import on no store":      {[]string{"key", "import", "-store", notAStore}, 1, "key store"},
+		"list in no such format":  {[]string{"key", "list", "-store", store, "-format", "yaml"}, 1, "format"},
+		"show in no such format":  {[]string{"key", "show", "bot", "-store", store, "-format", "yaml"}, 1, "format"},
+		"allow without a user":    {[]string{"key", "allow", "bot", "-store", store, "-host", "h", "-known-hosts", knownHosts}, 1, "missing argument"},
+		"allow without a host":    {[]string{"key", "allow", "bot", "-store", store, "-user", "git", "-known-hosts", knownHosts}, 1, "missing argument"},
+		"allow without the file":  {[]string{"key", "allow", "bot", "-store", store, "-user", "git", "-host", "h"}, 1, "missing argument"},
+		"allow with no such file": {[]string{"key", "allow", "bot", "-store", store, "-user", "git", "-host", "h", "-known-hosts", notAStore + "x"}, 1, "known_hosts"},
+		"disallow without a host": {[]string{"key", "disallow", "bot", "-store", store}, 1, "missing argument"},
+		"sshsig without a name":   {[]string{"key", "sshsig", "bot", "-store", store}, 1, "missing argument"},
+		"signers without one":     {[]string{"key", "signers", "bot", "-store", store}, 1, "missing argument"},
+		"delete without -yes":     {[]string{"key", "delete", "bot", "-store", store}, 1, "deletion needs -yes"},
+		"peers both ways":         {[]string{"key", "peers", "bot", "-store", store, "-add", "any", "-remove", "any"}, 1, "exclusive"},
+	} {
+		code, out, errOut := run(t, c.args...)
+		if code != c.code || !strings.Contains(errOut, c.want) || out != "" {
+			t.Fatalf("%s: exit %d: %q %q", name, code, out, errOut)
+		}
+	}
+
+	// None of it touched the key.
+	code, out, _ := run(t, "key", "list", "-store", store, "-format", "ssh")
+	if code != 0 || strings.Count(out, "\n") != 1 || !strings.HasSuffix(out, " bot\n") {
+		t.Fatalf("the store after the refusals: exit %d: %q", code, out)
+	}
+}
+
+// show names a key's place in a rotation, and only where it has one.
+func TestShowLineage(t *testing.T) {
+	t.Parallel()
+
+	dir, record := seed(t, "bot")
+
+	code, out, _ := run(t, "key", "show", "bot", "-store", dir, "-format", "json")
+	if code != 0 || strings.Contains(out, "predecessor") || strings.Contains(out, "successor") ||
+		strings.Contains(out, "retired") {
+		t.Fatalf("a key outside any rotation: exit %d: %s", code, out)
+	}
+
+	// The same key in a store of its own, as a rotation leaves one.
+	dir = filepath.Join(t.TempDir(), "keys")
+
+	store, err := keystore.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := "SHA256:" + strings.Repeat("A", 43)
+	after := "SHA256:" + strings.Repeat("B", 43)
+	retired := record.Created.Add(time.Hour)
+
+	record.Predecessor, record.Successor, record.Retired = before, after, &retired
+	if err = store.Create(record); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, _ = run(t, "key", "show", record.Fingerprint, "-store", dir, "-format", "json")
+	for _, want := range []string{
+		`"predecessor": "` + before + `"`, `"successor": "` + after + `"`, `"retired": "2026-10-12T17:30:00Z"`,
+		`"fingerprint": "` + record.Fingerprint + `"`, `"class": "after-first-unlock"`, `"created": "2026-10-12T16:30:00Z"`,
+	} {
+		if code != 0 || !strings.Contains(out, want) {
+			t.Fatalf("show lacks %s: exit %d: %s", want, code, out)
+		}
+	}
+}
 
 // A destination is a host and a user: allowing another user at a host adds
 // one, allowing the same pair again replaces it, and disallowing a host
@@ -214,6 +393,118 @@ func TestAWrongFlagIsToldOnStderr(t *testing.T) {
 			t.Fatalf("%v -bogus: exit %d, stdout %q, stderr %q", command, code, out, errOut)
 		}
 	}
+}
+
+// doctor reports each thing it checks on its own line and exits 1 when one
+// is wrong. In the sandbox the enclave and the keychain are out of reach,
+// which it says; the store and the socket are this test's.
+func TestDoctor(t *testing.T) {
+	t.Parallel()
+
+	store, record := seed(t, "bot")
+	dir := shortDir(t)
+
+	absent := filepath.Join(dir, "absent")
+	file := filepath.Join(dir, "file")
+	open := filepath.Join(dir, "open.sock")
+	private := filepath.Join(dir, "private.sock")
+
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for path, mode := range map[string]os.FileMode{open: 0o644, private: 0o600} {
+		listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		t.Cleanup(func() { _ = listener.Close() })
+
+		if err = os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// What decides the skip is the enclave, not what doctor says of it.
+	if enclave.Available() {
+		t.Skip("the enclave answers: this process is outside the sandbox")
+	}
+
+	code, out, errOut := run(t, "doctor", "-store", store, "-socket", absent)
+
+	for _, want := range []string{
+		"FAIL secure enclave reachable from this process\n",
+		"FAIL keychain access group : ",
+		"ok   key store " + store + "\n",
+		"ok   key store readable, 1 keys\n",
+		"ok   0 keys still to move into the keychain",
+		"FAIL key bot " + record.Fingerprint + ": ",
+		"FAIL socket " + absent + ": absent\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("doctor lacks %q:\n%s", want, out)
+		}
+	}
+
+	if code != 1 || !strings.Contains(errOut, "doctor found problems: ") {
+		t.Fatalf("doctor with problems: exit %d: %s", code, errOut)
+	}
+
+	for socket, want := range map[string]string{
+		file:    "FAIL socket " + file + ": not a socket\n",
+		open:    "FAIL socket " + open + ": mode 644, not 600\n",
+		private: "ok   socket " + private + ": present, private\n",
+	} {
+		if _, out, _ = run(t, "doctor", "-store", store, "-socket", socket); !strings.Contains(out, want) {
+			t.Fatalf("doctor lacks %q:\n%s", want, out)
+		}
+	}
+
+	// A v0.1 blob file still in the store is a finding of its own.
+	if err := os.WriteFile(filepath.Join(store, "leftover.blob"), []byte{1}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Rename(
+		filepath.Join(store, "leftover.blob"),
+		strings.TrimSuffix(recordPath(t, store), ".json")+".blob",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, out, _ = run(
+		t,
+		"doctor",
+		"-store",
+		store,
+		"-socket",
+		absent,
+	); !strings.Contains(
+		out,
+		"FAIL 1 keys still to move into the keychain",
+	) {
+		t.Fatalf("doctor with a blob file in the store:\n%s", out)
+	}
+
+	// A store that cannot be opened is one finding, and the keys are not
+	// looked for in it.
+	_, out, _ = run(t, "doctor", "-store", file, "-socket", absent)
+	if !strings.Contains(out, "FAIL key store "+file+": ") || strings.Contains(out, "key store readable") {
+		t.Fatalf("doctor on what is not a store:\n%s", out)
+	}
+}
+
+// recordPath is the one record file of a store with one key.
+func recordPath(t *testing.T, store string) string {
+	t.Helper()
+
+	records, err := filepath.Glob(filepath.Join(store, "*.json"))
+	if err != nil || len(records) != 1 {
+		t.Fatalf("the store's records: %v, %v", records, err)
+	}
+
+	return records[0]
 }
 
 // shortDir is a temporary directory short enough for a socket path.

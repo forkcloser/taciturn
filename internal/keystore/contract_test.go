@@ -25,14 +25,14 @@ var created = time.Date(2026, time.October, 12, 15, 0, 0, 0, time.UTC)
 
 // key builds a record for a seed, and the blob a v0.1 store would hold for
 // it: the seed decides the public key, so two seeds are two keys.
-func key(t *testing.T, name string, seed byte) (keystore.Record, []byte) {
-	t.Helper()
+func key(tb testing.TB, name string, seed byte) (keystore.Record, []byte) {
+	tb.Helper()
 
 	point := append([]byte{4}, bytes.Repeat([]byte{seed}, 64)...)
 
 	blob, err := protocol.ECDSAP256PublicKey(point)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 
 	record := keystore.Record{

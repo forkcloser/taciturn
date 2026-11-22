@@ -320,11 +320,15 @@ func TestEveryRequestLeavesOneRecord(t *testing.T) {
 		map[string]any{"outcome": "allow", "request": "identities", "listed": 0, "hidden": 1, "bound": "refused"})
 
 	// Who asked is on every record: this process, by pid, path and
-	// signature.
+	// signature. The path is the executable's, or, for the main executable
+	// of a bundle, which is how the hardware lane runs this test, the
+	// bundle's.
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	own := evaluated(t, executable)
 
 	first, numbered := log.last(t, count)["connection"].(float64)
 	if !numbered {
@@ -334,8 +338,9 @@ func TestEveryRequestLeavesOneRecord(t *testing.T) {
 	for _, one := range log.requests(t) {
 		expect(t, one, map[string]any{"peer_pid": os.Getpid(), "peer_signed": true, "connection": first})
 
-		if got, _ := filepath.EvalSymlinks(one.text("peer_path")); got != evaluated(t, executable) {
-			t.Fatalf("peer_path %q, want %q", one.text("peer_path"), executable)
+		got, _ := filepath.EvalSymlinks(one.text("peer_path"))
+		if got != own && got+"/Contents/MacOS/"+filepath.Base(own) != own {
+			t.Fatalf("peer_path %q, want %q or its bundle", one.text("peer_path"), own)
 		}
 
 		if one.text("peer_identifier") == "" || one.text("peer_cdhash") == "" {

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -79,6 +80,106 @@ func TestDestinationsByHostAndUser(t *testing.T) {
 	shown = destinations()
 	if strings.Contains(shown, "one.example") || strings.Count(shown, "git@two.example") != 1 {
 		t.Fatalf("after disallowing one host:\n%s", shown)
+	}
+}
+
+// The usage says what each command takes, and a command refuses what the
+// usage does not give it: -store is the key commands', the agent's and
+// doctor's, and the audit log's path is the agent's and log's.
+func TestUsageSaysWhatTheCommandsTake(t *testing.T) {
+	t.Parallel()
+
+	_, usage, _ := run(t, "help")
+
+	for _, want := range []string{
+		"taciturn agent [-audit FILE]",
+		"taciturn log [-follow] [-json] [-key NAME] [-audit FILE]",
+		"taciturn version | help",
+		"taciturn key show NAME [-format console|json]",
+		"its name or its SHA256: fingerprint",
+		"The key commands, agent and doctor take -store DIR; agent, status and doctor\ntake -socket PATH.",
+	} {
+		if !strings.Contains(usage, want) {
+			t.Fatalf("the usage lacks %q:\n%s", want, usage)
+		}
+	}
+
+	for _, command := range []string{"install", "uninstall", "status", "log"} {
+		if code, _, _ := run(t, command, "-store", t.TempDir()); code != 2 {
+			t.Fatalf("%s -store: exit %d", command, code)
+		}
+	}
+
+	for _, command := range []string{"install", "uninstall", "log"} {
+		if code, _, _ := run(t, command, "-socket", filepath.Join(t.TempDir(), "s")); code != 2 {
+			t.Fatalf("%s -socket: exit %d", command, code)
+		}
+	}
+}
+
+// A key that exists is named to a key command by its name or by its
+// fingerprint, and the command does the same with either.
+func TestKeyCommandsTakeTheFingerprint(t *testing.T) {
+	t.Parallel()
+
+	knownHosts := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(
+		knownHosts,
+		[]byte("h ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// In the order a key's life takes them; rotate needs the enclave and
+	// is the hardware lane's.
+	commands := [][]string{
+		{"show"},
+		{"allow", "-user", "git", "-host", "h", "-known-hosts", knownHosts},
+		{"sshsig", "-namespace", "git"},
+		{"peers", "-add", "path=/opt/ssh/bin/ssh"},
+		{"signers", "-principal", "bot@example"},
+		{"disallow", "-host", "h"},
+		{"retire"},
+		{"delete", "-yes"},
+	}
+
+	byName, _ := seed(t, "bot")
+	byFingerprint, record := seed(t, "bot")
+
+	for _, command := range commands {
+		wantCode, wantOut, wantErr := run(
+			t,
+			append([]string{"key", command[0], "bot", "-store", byName}, command[1:]...)...,
+		)
+		code, out, errOut := run(
+			t,
+			append([]string{"key", command[0], record.Fingerprint, "-store", byFingerprint}, command[1:]...)...,
+		)
+
+		if wantCode != 0 || code != 0 {
+			t.Fatalf(
+				"key %s: exit %d by name (%s), %d by fingerprint (%s)",
+				command[0],
+				wantCode,
+				wantErr,
+				code,
+				errOut,
+			)
+		}
+
+		// The two stores hold two keys: what is printed differs by the key
+		// alone, and by the instant of a retirement.
+		if command[0] != "show" && command[0] != "signers" && command[0] != "retire" && command[0] != "delete" &&
+			out != wantOut {
+			t.Fatalf("key %s by fingerprint printed %q, by name %q", command[0], out, wantOut)
+		}
+	}
+
+	for _, store := range []string{byName, byFingerprint} {
+		if code, out, _ := run(t, "key", "list", "-store", store, "-format", "ssh"); code != 0 || out != "" {
+			t.Fatalf("the store after the key's life: exit %d: %q", code, out)
+		}
 	}
 }
 
@@ -171,6 +272,21 @@ func TestAgentCommand(t *testing.T) {
 		t.Skip("built without Security.framework: the agent identifies no peer and answers none")
 	}
 
+	// An interrupt is a terminal's; SIGTERM is what launchd sends an agent
+	// it unloads.
+	for name, stop := range map[string]os.Signal{"interrupt": os.Interrupt, "terminate": syscall.SIGTERM} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			agentServesUntil(t, stop)
+		})
+	}
+}
+
+// agentServesUntil runs `taciturn agent` as a child, holds it to what it
+// serves and writes, and stops it with the signal.
+func agentServesUntil(t *testing.T, stop os.Signal) {
+	t.Helper()
+
 	dir := shortDir(t)
 	socket := filepath.Join(dir, "run", "a.sock")
 	audit := filepath.Join(dir, "logs", "audit.log")
@@ -242,12 +358,12 @@ func TestAgentCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err = child.Process.Signal(os.Interrupt); err != nil {
+	if err = child.Process.Signal(stop); err != nil {
 		t.Fatal(err)
 	}
 
 	if err = child.Wait(); err != nil {
-		t.Fatalf("the agent after an interrupt: %v", err)
+		t.Fatalf("the agent after %s: %v", stop, err)
 	}
 
 	if _, err = os.Lstat(socket); !os.IsNotExist(err) {

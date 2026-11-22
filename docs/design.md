@@ -232,8 +232,9 @@ Per key, in its record, set by the command line:
   out of a known_hosts file, leaving out one the file marks `@revoked` for the host.
 - `namespaces`: the SSHSIG namespaces the key may sign in (`git` for commits and tags).
 - `peers`: who may ask. An entry is `any`, or `path=` and a glob matched against the
-  peer's executable path, or a code-signing requirement in Apple's requirement language,
-  evaluated on the peer (F9). The list is the creator's statement, required at
+  peer's executable path (for the main executable of an app bundle, the bundle's
+  directory, which is the path Security.framework gives and the audit log records), or a
+  code-signing requirement in Apple's requirement language, evaluated on the peer (F9). The list is the creator's statement, required at
   `key create`; taciturn assumes nothing and ships no default. An entry is checked when it
   is given, as the agent will read it, since the agent treats what it cannot read as
   unsatisfied. A path names a file, and proves nothing about what the file is: it is the

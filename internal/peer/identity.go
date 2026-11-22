@@ -10,7 +10,8 @@ type Process struct {
 type Identity struct {
 	PID int    `json:"pid"`
 	UID uint32 `json:"uid"`
-	// Path is the executable's path as the framework resolves it.
+	// Path is the executable's path as the framework resolves it: for the
+	// main executable of a bundle, the bundle's directory.
 	Path string `json:"path"`
 	// Identifier is the code signature's identifier; an ad-hoc signature's
 	// is the file's name, and proves nothing.

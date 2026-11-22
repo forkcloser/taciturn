@@ -285,7 +285,16 @@ func TestPeerEntries(t *testing.T) {
 			true,
 		},
 		"empty entry matches nothing": {[]string{""}, policy.Peer{Path: ""}, false},
-		"path= alone matches no path": {[]string{"path="}, policy.Peer{Path: ""}, true},
+		// A peer with no path is named by no path entry, whatever the
+		// pattern would match.
+		"no path, an empty pattern": {[]string{"path="}, policy.Peer{Path: ""}, false},
+		"no path, a star":           {[]string{"path=*"}, policy.Peer{Path: ""}, false},
+		"no path, any":              {[]string{policy.PeerAny}, policy.Peer{Path: ""}, true},
+		"no path, a requirement": {
+			[]string{"path=*", "anchor apple"},
+			policy.Peer{Path: "", Satisfied: []string{"anchor apple"}},
+			true,
+		},
 	}
 
 	for name, c := range cases {

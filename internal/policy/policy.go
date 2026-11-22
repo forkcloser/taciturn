@@ -37,7 +37,8 @@ type Policy struct {
 }
 
 // Peer is what the agent established about the connecting process: its
-// executable path, and the requirement strings it evaluated as satisfied.
+// executable path, empty when it could not be established, and the
+// requirement strings it evaluated as satisfied.
 type Peer struct {
 	Path      string
 	Satisfied []string
@@ -222,8 +223,14 @@ func peerAllowed(peers []string, peer Peer) bool {
 		case entry == PeerAny:
 			return true
 		case strings.HasPrefix(entry, PeerPathPrefix):
-			// A bad pattern matches nothing: filepath.Match reports it as
-			// an error, and an entry that cannot match must not admit.
+			// A peer whose path the agent could not establish is named by
+			// no path entry, an empty pattern or "*" included. A bad
+			// pattern matches nothing: filepath.Match reports it as an
+			// error, and an entry that cannot match must not admit.
+			if peer.Path == "" {
+				continue
+			}
+
 			if ok, err := filepath.Match(strings.TrimPrefix(entry, PeerPathPrefix), peer.Path); err == nil && ok {
 				return true
 			}

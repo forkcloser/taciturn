@@ -8,6 +8,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -100,8 +102,8 @@ func (j *journal) last(t *testing.T, count int) entry {
 	return records[count-1]
 }
 
-// logged is a running agent, on its defaults, that logs to a journal.
-func logged(t *testing.T) (*rig, *journal) {
+// logged is a running agent that logs to a journal.
+func logged(t *testing.T, config agent.Config) (*rig, *journal) {
 	t.Helper()
 
 	dir := shortDir(t)
@@ -112,9 +114,11 @@ func logged(t *testing.T) (*rig, *journal) {
 	}
 
 	log := &journal{}
+	config.Store = store
+	config.Logger = slog.New(slog.NewJSONHandler(log, nil))
 	socket := filepath.Join(dir, "a.sock")
 
-	server, err := agent.Listen(socket, agent.Config{Store: store, Logger: slog.New(slog.NewJSONHandler(log, nil))})
+	server, err := agent.Listen(socket, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +220,7 @@ func TestEveryRequestLeavesOneRecord(t *testing.T) {
 	t.Parallel()
 	requirePeerIdentity(t)
 
-	r, log := logged(t)
+	r, log := logged(t, agent.Config{})
 	h := newHost(t)
 	other := newHost(t)
 
@@ -320,15 +324,16 @@ func TestEveryRequestLeavesOneRecord(t *testing.T) {
 		map[string]any{"outcome": "allow", "request": "identities", "listed": 0, "hidden": 1, "bound": "refused"})
 
 	// Who asked is on every record: this process, by pid, path and
-	// signature. The path is the executable's, or, for the main executable
-	// of a bundle, which is how the hardware lane runs this test, the
-	// bundle's.
+	// signature, and its parents, nearest first. The path is the
+	// executable's, or, for the main executable of a bundle, which is how
+	// the hardware lane runs this test, the bundle's.
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	own := evaluated(t, executable)
+	parents := regexp.MustCompile(`^` + strconv.Itoa(os.Getppid()) + `:/[^<]+( < \d+(:/[^<]+)?)*$`)
 
 	first, numbered := log.last(t, count)["connection"].(float64)
 	if !numbered {
@@ -343,8 +348,14 @@ func TestEveryRequestLeavesOneRecord(t *testing.T) {
 			t.Fatalf("peer_path %q, want %q or its bundle", one.text("peer_path"), own)
 		}
 
-		if one.text("peer_identifier") == "" || one.text("peer_cdhash") == "" {
+		if one.text("peer_identifier") == "" || len(one.text("peer_cdhash")) != 40 ||
+			!parents.MatchString(one.text("peer_parents")) {
 			t.Fatalf("who asked: %v", one)
+		}
+
+		// Every parent is on the record, one without a path included.
+		if chain := strings.Count(one.text("peer_parents"), " < ") + 1; chain != ownParents(t) {
+			t.Fatalf("%d parents on record, the peer has %d: %s", chain, ownParents(t), one.text("peer_parents"))
 		}
 	}
 
@@ -375,7 +386,7 @@ func TestBindingsAreRecorded(t *testing.T) {
 	t.Parallel()
 	requirePeerIdentity(t)
 
-	r, log := logged(t)
+	r, log := logged(t, agent.Config{})
 	h := newHost(t)
 	forger := newHost(t)
 
@@ -454,7 +465,7 @@ func TestListingPassesOverWhatItLeavesOut(t *testing.T) {
 	t.Parallel()
 	requirePeerIdentity(t)
 
-	r, log := logged(t)
+	r, log := logged(t, agent.Config{})
 	h := newHost(t)
 	elsewhere := newHost(t)
 
@@ -512,7 +523,7 @@ func TestPeerRequirements(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			r, log := logged(t)
+			r, log := logged(t, agent.Config{})
 			pol := policy.Policy{Namespaces: []string{"git"}, Peers: c.peers}
 			record := botKey(t, "bot", pol)
 
@@ -556,6 +567,26 @@ func count(entries []string, one string) int {
 func ownIdentifier(t *testing.T) string {
 	t.Helper()
 
+	identifier, _ := ownIdentity(t)
+
+	return identifier
+}
+
+// ownParents is how many parents this process has, as package peer reads
+// them.
+func ownParents(t *testing.T) int {
+	t.Helper()
+
+	_, parents := ownIdentity(t)
+
+	return parents
+}
+
+// ownIdentity is what package peer says of this process connecting to
+// itself: its identifier and the length of its parent chain.
+func ownIdentity(t *testing.T) (identifier string, parents int) {
+	t.Helper()
+
 	path := filepath.Join(shortDir(t), "p")
 
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
@@ -586,7 +617,7 @@ func ownIdentifier(t *testing.T) string {
 
 	defer identity.Close()
 
-	return identity.Identifier
+	return identity.Identifier, len(identity.Parents)
 }
 
 // A store that cannot be read refuses the listing and the signature, each
@@ -595,7 +626,7 @@ func TestUnreadableStoreIsRecorded(t *testing.T) {
 	t.Parallel()
 	requirePeerIdentity(t)
 
-	r, log := logged(t)
+	r, log := logged(t, agent.Config{})
 
 	record := botKey(t, "bot", policy.Policy{Namespaces: []string{"git"}, Peers: []string{policy.PeerAny}})
 	if err := r.store.Create(record); err != nil {
@@ -631,18 +662,148 @@ func TestUnreadableStoreIsRecorded(t *testing.T) {
 	}
 }
 
+// A frame that cannot be read ends the connection and is logged; a client
+// that just goes away is not.
+func TestUnreadableRequestIsLogged(t *testing.T) {
+	t.Parallel()
+	requirePeerIdentity(t)
+
+	r, log := logged(t, agent.Config{})
+
+	quiet := r.wire(t)
+	quiet.ask(t, protocol.TypeRequestIdentities, nil)
+
+	if err := quiet.conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// A frame of length zero.
+	broken := r.wire(t)
+	if _, err := broken.conn.Write([]byte{0, 0, 0, 0}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := broken.conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	// The agent closes: the read ends with no answer.
+	if n, err := broken.conn.Read(make([]byte, 1)); n != 0 || err == nil {
+		t.Fatalf("an answer to an unreadable frame: %d bytes, %v", n, err)
+	}
+
+	// One line, for the frame and saying so: not for the departure.
+	unreadable := log.entries(t, "request unreadable")
+	if len(unreadable) != 1 || !strings.Contains(unreadable[0].text("reason"), "malformed agent message") {
+		t.Fatalf("unreadable requests logged: %v", unreadable)
+	}
+}
+
 // Without a configuration the defaults serve: a connection is answered,
 // not closed at once by a zero deadline.
 func TestDefaultsServe(t *testing.T) {
 	t.Parallel()
 	requirePeerIdentity(t)
 
-	r, _ := logged(t)
+	r, _ := logged(t, agent.Config{})
 
 	conn := r.wire(t)
 	for range 2 {
 		if answer := conn.ask(t, protocol.TypeRequestIdentities, nil); answer != protocol.TypeIdentitiesAnswer {
 			t.Fatalf("answer %s", answer)
 		}
+	}
+}
+
+// At most MaxConnections are served at once: the next one waits, accepted
+// and unanswered, until one ends.
+func TestConnectionsBeyondTheBoundWait(t *testing.T) {
+	t.Parallel()
+	requirePeerIdentity(t)
+
+	r, _ := logged(t, agent.Config{MaxConnections: 1, IdleTimeout: 5 * time.Second})
+
+	first := r.wire(t)
+	first.ask(t, protocol.TypeRequestIdentities, nil)
+
+	second := r.wire(t)
+	if _, err := (protocol.Message{Type: protocol.TypeRequestIdentities}).WriteTo(second.conn); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := second.conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := protocol.ReadMessage(second.conn); err == nil {
+		t.Fatal("a second connection was answered while the first held the one slot")
+	}
+
+	if err := first.conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := second.conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	answer, err := protocol.ReadMessage(second.conn)
+	if err != nil || answer.Type != protocol.TypeIdentitiesAnswer {
+		t.Fatalf("the second connection once the first ended: %v, %v", answer.Type, err)
+	}
+}
+
+// Serve returns once the connections in flight have ended, not before; and
+// closing the server, without ending the context, is a clean stop too.
+func TestServeWaitsForConnections(t *testing.T) {
+	t.Parallel()
+	requirePeerIdentity(t)
+
+	dir := shortDir(t)
+
+	store, err := keystore.Open(filepath.Join(dir, "keys"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server, err := agent.Listen(filepath.Join(dir, "a.sock"), agent.Config{Store: store, IdleTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+
+	// The context never ends before the test does: Close is what stops.
+	go func() { done <- server.Serve(t.Context()) }()
+
+	conn, err := net.Dial("unix", filepath.Join(dir, "a.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	open := wire{conn}
+	open.ask(t, protocol.TypeRequestIdentities, nil)
+
+	if err = server.Close(); err != nil {
+		t.Fatalf("Close while serving: %v", err)
+	}
+
+	select {
+	case err = <-done:
+		t.Fatalf("Serve returned with a connection in flight: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	if err = conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err = <-done:
+		if err != nil {
+			t.Fatalf("Serve after Close: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Serve did not return once its last connection ended")
 	}
 }

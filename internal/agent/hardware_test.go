@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/forkcloser/taciturn/internal/agent"
 	"github.com/forkcloser/taciturn/internal/enclave"
 	"github.com/forkcloser/taciturn/internal/policy"
 	"github.com/forkcloser/taciturn/internal/protocol"
@@ -24,7 +25,7 @@ func TestSignEndToEnd(t *testing.T) {
 		t.Skipf("no keychain access group, the test binary is not in the signed bundle: %v", err)
 	}
 
-	r, log := logged(t)
+	r, log := logged(t, agent.Config{})
 	h := newHost(t)
 
 	made, err := enclave.Generate(enclave.ClassAfterFirstUnlock)

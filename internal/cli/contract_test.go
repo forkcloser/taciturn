@@ -8,12 +8,15 @@
 package cli_test
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/base64"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -573,6 +576,107 @@ func TestLogShowsWhatFailed(t *testing.T) {
 			"enclave: signing: OSStatus -25308: secure enclave refused\n"+
 			"2026-10-12T16:00:02Z refuse identities - key store unreadable\n" {
 		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// A log whose last line has no newline yet is read to its end: the line is
+// printed once, whole.
+func TestLogWithoutAFinalNewline(t *testing.T) {
+	t.Parallel()
+
+	audit := filepath.Join(t.TempDir(), "audit.log")
+	lines := `{"time":"2026-10-12T16:00:00Z","msg":"agent started"}
+{"time":"2026-10-12T16:00:01Z","msg":"agent stopped"}`
+
+	if err := os.WriteFile(audit, []byte(lines), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, _ := run(t, "log", "-audit", audit)
+	if code != 0 || out != "2026-10-12T16:00:00Z agent started\n2026-10-12T16:00:01Z agent stopped\n" {
+		t.Fatalf("exit %d:\n%q", code, out)
+	}
+}
+
+// TestHelperFollow is the child process of TestLogFollow: `taciturn log
+// -follow` over the file the environment names, until it is signalled; the
+// command's exit code is the test's verdict, and so the child's.
+func TestHelperFollow(t *testing.T) { //nolint:paralleltest // the one test of its process
+	audit := os.Getenv(followEnv)
+	if audit == "" {
+		t.Skip("not the child process")
+	}
+
+	if code := cli.Run("test", []string{"log", "-audit", audit, "-follow"}, os.Stdout, os.Stderr); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+}
+
+const followEnv = "TACITURN_TEST_FOLLOW"
+
+// -follow prints what the agent appends, a record only once its line is
+// complete, and ends with exit 0 at an interrupt.
+func TestLogFollow(t *testing.T) {
+	t.Parallel()
+
+	audit := filepath.Join(t.TempDir(), "audit.log")
+	first := `{"time":"2026-10-12T16:00:00Z","msg":"agent started"}` + "\n"
+	second := `{"time":"2026-10-12T16:00:01Z","msg":"request","outcome":"allow","request":"identities"}` + "\n"
+
+	if err := os.WriteFile(audit, []byte(first+second[:40]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The child is given a minute: one that hangs is killed, its pipe
+	// closes, and the test fails here instead of holding the run.
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+
+	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHelperFollow$")
+
+	child.Env = append(os.Environ(), followEnv+"="+audit)
+	child.WaitDelay = 5 * time.Second
+
+	stdout, err := child.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err = child.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	lines := bufio.NewReader(stdout)
+
+	line, err := lines.ReadString('\n')
+	if err != nil || line != "2026-10-12T16:00:00Z agent started\n" {
+		t.Fatalf("the record already in the log: %q, %v", line, err)
+	}
+
+	file, err := os.OpenFile(audit, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = file.WriteString(second[40:]); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	line, err = lines.ReadString('\n')
+	if err != nil || line != "2026-10-12T16:00:01Z allow identities\n" {
+		t.Fatalf("the record completed while following: %q, %v", line, err)
+	}
+
+	if err = child.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = child.Wait(); err != nil {
+		t.Fatalf("follow after an interrupt: %v", err)
 	}
 }
 

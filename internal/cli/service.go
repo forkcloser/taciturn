@@ -382,13 +382,18 @@ func runLog(ctx context.Context, args []string, stdout io.Writer) error {
 // tail prints the records in the reader and, when following, keeps
 // reading what the agent appends until the context ends.
 func tail(ctx context.Context, reader *bufio.Reader, stdout io.Writer, follow, asJSON bool, keyName string) error {
+	// A line read up to the end of the file without its newline is one the
+	// agent is still writing: it waits here for the rest.
+	var pending string
+
 	for {
 		line, err := reader.ReadString('\n')
-		if line != "" {
-			printRecord(stdout, strings.TrimRight(line, "\n"), asJSON, keyName)
-		}
+		pending += line
 
 		if err == nil {
+			printRecord(stdout, strings.TrimSuffix(pending, "\n"), asJSON, keyName)
+			pending = ""
+
 			continue
 		}
 
@@ -397,6 +402,10 @@ func tail(ctx context.Context, reader *bufio.Reader, stdout io.Writer, follow, a
 		}
 
 		if !follow {
+			if pending != "" {
+				printRecord(stdout, pending, asJSON, keyName)
+			}
+
 			return nil
 		}
 

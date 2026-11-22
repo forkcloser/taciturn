@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -171,6 +172,21 @@ func TestAgentCommand(t *testing.T) {
 		t.Skip("built without Security.framework: the agent identifies no peer and answers none")
 	}
 
+	// An interrupt is a terminal's; SIGTERM is what launchd sends an agent
+	// it unloads.
+	for name, stop := range map[string]os.Signal{"interrupt": os.Interrupt, "terminate": syscall.SIGTERM} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			agentServesUntil(t, stop)
+		})
+	}
+}
+
+// agentServesUntil runs `taciturn agent` as a child, holds it to what it
+// serves and writes, and stops it with the signal.
+func agentServesUntil(t *testing.T, stop os.Signal) {
+	t.Helper()
+
 	dir := shortDir(t)
 	socket := filepath.Join(dir, "run", "a.sock")
 	audit := filepath.Join(dir, "logs", "audit.log")
@@ -242,12 +258,12 @@ func TestAgentCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err = child.Process.Signal(os.Interrupt); err != nil {
+	if err = child.Process.Signal(stop); err != nil {
 		t.Fatal(err)
 	}
 
 	if err = child.Wait(); err != nil {
-		t.Fatalf("the agent after an interrupt: %v", err)
+		t.Fatalf("the agent after %s: %v", stop, err)
 	}
 
 	if _, err = os.Lstat(socket); !os.IsNotExist(err) {

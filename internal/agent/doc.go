@@ -10,8 +10,8 @@
 //
 //   - request-identities: the keys the policy lists to this connection;
 //   - sign-request: the signature, when the policy allows it, made by the
-//     enclave with the key loaded from its blob and checked against its
-//     public key first;
+//     enclave with the key the keychain holds under the record's
+//     fingerprint, checked against the record's public key first;
 //   - extension session-bind@openssh.com: recorded once the host key's
 //     signature over the session identifier verifies; a second binding
 //     that is not the same, or one that does not verify, refuses and marks

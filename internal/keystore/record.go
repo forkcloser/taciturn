@@ -23,7 +23,7 @@ const (
 	ClassWhenUnlocked Class = "when-unlocked"
 )
 
-// Record is what the store knows about a key besides its blob.
+// Record is what the store knows about a key.
 type Record struct {
 	// Fingerprint is "SHA256:" and the unpadded base64 digest of PublicKey,
 	// the key's identity everywhere.

@@ -6,8 +6,10 @@
 //
 // Every decoder is strict: a field that overruns its buffer, a length that
 // claims more than is there, a byte left over after the last field, or a
-// constant that is not what the format fixes is ErrInvalid. Nothing is
-// decoded that the agent does not act on.
+// constant that is not what the format fixes is ErrInvalid. The flags of
+// a sign request, which mean something for RSA keys only, are read with
+// their frame and acted on by nothing; nothing else is decoded that the
+// agent does not use.
 //
 // Limits, each reported as ErrTooLarge: a message of more than MaxMessage
 // bytes, a session identifier of more than MaxSessionID bytes.

@@ -112,16 +112,15 @@ func Listen(path string, config Config) (*Server, error) {
 		return nil, fmt.Errorf("listening on %s: %w", path, err)
 	}
 
-	// The directory is private already; the socket is made private too,
-	// after creation, since the listener honours the umask.
+	// The listener honours the umask, so the socket is made private after
+	// it exists. Its directory is the caller's to keep private; a peer of
+	// another user is refused whatever either mode says.
 	if err := os.Chmod(path, socketMode); err != nil {
 		_ = listener.Close()
 		_ = flock.Unlock(lock)
 
 		return nil, fmt.Errorf("securing %s: %w", path, err)
 	}
-
-	listener.SetUnlinkOnClose(true)
 
 	return &Server{
 		config:   config,

@@ -148,6 +148,14 @@ func TestSatisfies(t *testing.T) {
 		t.Fatalf("requirement that is not UTF-8: %v", err)
 	}
 
+	// Up to the NUL this is a requirement the peer satisfies; the whole of
+	// it is what the policy holds, and that is no requirement.
+	if _, err := identity.Satisfies(
+		`identifier "` + identity.Identifier + "\"\x00 and anchor apple",
+	); !errors.Is(err, peer.ErrInvalid) {
+		t.Fatalf("requirement holding a NUL: %v", err)
+	}
+
 	identity.Close()
 	identity.Close()
 
@@ -175,7 +183,10 @@ func TestValidRequirement(t *testing.T) {
 		}
 	}
 
-	for _, text := range []string{"", "this is not a requirement (((", `identifier`, "anchor apple and", "anchor \xff\xfe apple"} {
+	for _, text := range []string{
+		"", "this is not a requirement (((", `identifier`, "anchor apple and", "anchor \xff\xfe apple",
+		"anchor apple\x00", "anchor apple\x00 and identifier",
+	} {
 		if err := peer.ValidRequirement(text); !errors.Is(err, peer.ErrInvalid) {
 			t.Fatalf("%q: %v", text, err)
 		}

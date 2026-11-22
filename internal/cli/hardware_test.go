@@ -13,9 +13,9 @@ import (
 )
 
 // The key commands that reach the enclave and the keychain, on the
-// hardware and from the signed bundle: create, rotate, retire, delete.
-// Every key the test makes leaves the keychain with it, whatever fails on
-// the way.
+// hardware and from the signed bundle: create, rotate named by the
+// fingerprint, retire, delete. Every key the test makes leaves the keychain
+// with it, whatever fails on the way.
 func TestKeyLifecycleOnTheHardware(t *testing.T) {
 	t.Parallel()
 
@@ -59,7 +59,9 @@ func TestKeyLifecycleOnTheHardware(t *testing.T) {
 
 	inKeychain(t, dir, first, true)
 
-	code, out, errOut = run(t, "key", "rotate", "bot", "-store", dir)
+	// Rotation named by the fingerprint: the successor takes the record's
+	// name, not the argument.
+	code, out, errOut = run(t, "key", "rotate", first, "-store", dir)
 	if code != 0 {
 		t.Fatalf("rotate: exit %d: %s", code, errOut)
 	}

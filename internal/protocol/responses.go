@@ -44,9 +44,9 @@ func SignResponse(signatureBlob []byte) Message {
 	return Message{Type: TypeSignResponse, Payload: out.buf}
 }
 
-// ExtensionResponse encodes SSH_AGENT_EXTENSION_RESPONSE for a named
+// extensionResponse encodes SSH_AGENT_EXTENSION_RESPONSE for a named
 // extension, its contents already encoded.
-func ExtensionResponse(name string, contents []byte) Message {
+func extensionResponse(name string, contents []byte) Message {
 	var out builder
 
 	out.putString(name)
@@ -64,5 +64,5 @@ func QueryResponse(supported []string) Message {
 		out.putString(name)
 	}
 
-	return ExtensionResponse(ExtensionQuery, out.buf)
+	return extensionResponse(ExtensionQuery, out.buf)
 }

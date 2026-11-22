@@ -318,16 +318,16 @@ The log is not rotated. On the machine it was written for it grew by about 0.7 M
 ### The command line
 
 ```
-taciturn agent                       serve the socket in the foreground (what the LaunchAgent runs)
+taciturn agent [-audit FILE]         serve the socket in the foreground (what the LaunchAgent runs)
 taciturn install | uninstall         the user LaunchAgent, org.forkcloser.taciturn
 taciturn status                      the LaunchAgent and the socket
 taciturn doctor                      the enclave, the store, every key, the agent: one report
-taciturn log [-follow] [-json] [-key NAME]
-taciturn version
+taciturn log [-follow] [-json] [-key NAME] [-audit FILE]
+taciturn version | help
 
 taciturn key create NAME -use locked|unlocked -peers ENTRY[,ENTRY]
 taciturn key list [-format console|json|ssh]
-taciturn key show NAME
+taciturn key show NAME [-format console|json]
 taciturn key allow NAME -user USER -host HOST -known-hosts FILE
 taciturn key disallow NAME -host HOST
 taciturn key peers NAME [-add ENTRY] [-remove ENTRY]
@@ -339,8 +339,10 @@ taciturn key retire NAME
 taciturn key signers NAME -principal EMAIL
 ```
 
-Every key command takes `-store DIR`. The exit code is 0 when the command did what it was
-asked, 1 when it refused or failed, 2 for a command line it could not read. Every command
+A key command takes, for a key that exists, its name or its `SHA256:` fingerprint. The
+key commands, `agent` and `doctor` take `-store DIR`; `agent`, `status` and `doctor` take
+`-socket PATH`. The exit code is 0 when the command did what it was asked, 1 when it
+refused or failed, 2 for a command line it could not read. Every command
 but `agent` is a process over the store; none talks to the agent. `create`, `rotate`,
 `delete`, `import` and `doctor` reach the enclave and the keychain, which answer only to
 the signed bundle, outside any sandbox.

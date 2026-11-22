@@ -155,16 +155,17 @@ func report(err error, stderr io.Writer) int {
 func usage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `taciturn: an ssh-agent for keys in the Secure Enclave
 
-  taciturn agent                       serve the socket in the foreground (what the LaunchAgent runs)
+  taciturn agent [-audit FILE]         serve the socket in the foreground (what the LaunchAgent runs)
   taciturn install | uninstall         the user LaunchAgent, `+launchd.Label+`
   taciturn status                      the LaunchAgent and the socket
   taciturn doctor                      the enclave, the store, every key, the agent: one report
-  taciturn log [-follow] [-json] [-key NAME]
+  taciturn log [-follow] [-json] [-key NAME] [-audit FILE]
                                        the audit log
+  taciturn version | help
 
   taciturn key create NAME -use locked|unlocked -peers ENTRY[,ENTRY]
   taciturn key list [-format console|json|ssh]
-  taciturn key show NAME
+  taciturn key show NAME [-format console|json]
   taciturn key allow NAME -user USER -host HOST -known-hosts FILE
   taciturn key disallow NAME -host HOST
   taciturn key peers NAME [-add ENTRY] [-remove ENTRY]
@@ -177,7 +178,9 @@ func usage(w io.Writer) {
   taciturn key signers NAME -principal EMAIL
                                        the allowed-signers line, with its validity window
 
-Every command takes -store DIR and, where it matters, -socket PATH.
+A key command takes, for a key that exists, its name or its SHA256: fingerprint.
+The key commands, agent and doctor take -store DIR; agent, status and doctor
+take -socket PATH.
 `)
 }
 

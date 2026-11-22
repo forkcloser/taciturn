@@ -151,7 +151,11 @@ func runSequence(t *testing.T, sequence []op) {
 			}
 		case "update":
 			record.Policy.Namespaces = []string{"git", "file"}
-			err = store.Update(record)
+			_, err = store.Edit(record.Fingerprint, func(r *keystore.Record) error {
+				*r = record
+
+				return nil
+			})
 			_, exists := model[record.Fingerprint]
 
 			if exists != (err == nil) || (!exists && !errors.Is(err, keystore.ErrNotFound)) {

@@ -229,7 +229,7 @@ Per key, in its record, set by the command line:
 - `destinations`: where the key may authenticate. `host` is a label for the listing; the
   host keys, each a public key blob, are what the protocol carries and what the decision
   compares (F8). `key allow NAME -user U -host H -known-hosts FILE` copies the host's keys
-  out of a known_hosts file.
+  out of a known_hosts file, leaving out one the file marks `@revoked` for the host.
 - `namespaces`: the SSHSIG namespaces the key may sign in (`git` for commits and tags).
 - `peers`: who may ask. An entry is `any`, or `path=` and a glob matched against the
   peer's executable path, or a code-signing requirement in Apple's requirement language,

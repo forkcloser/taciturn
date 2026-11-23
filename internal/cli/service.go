@@ -124,8 +124,8 @@ func executable() (string, error) {
 	return resolved, nil
 }
 
-func runInstall(ctx context.Context, args []string, stdout io.Writer) error {
-	set := flagSet("install", stdout)
+func runInstall(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	set := flagSet("install", stderr)
 	if err := parse(set, args); err != nil {
 		return err
 	}
@@ -160,8 +160,8 @@ func runInstall(ctx context.Context, args []string, stdout io.Writer) error {
 	return nil
 }
 
-func runUninstall(ctx context.Context, args []string, stdout io.Writer) error {
-	set := flagSet("uninstall", stdout)
+func runUninstall(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	set := flagSet("uninstall", stderr)
 	if err := parse(set, args); err != nil {
 		return err
 	}
@@ -183,13 +183,13 @@ func runUninstall(ctx context.Context, args []string, stdout io.Writer) error {
 	return nil
 }
 
-func runStatus(ctx context.Context, args []string, stdout io.Writer) error {
+func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	loc, err := resolve()
 	if err != nil {
 		return err
 	}
 
-	set := flagSet("status", stdout)
+	set := flagSet("status", stderr)
 	socket := set.String("socket", loc.socket, "the socket to check")
 
 	if err = parse(set, args); err != nil {
@@ -353,13 +353,13 @@ type auditRecord struct {
 	Peer    string    `json:"peer_path"` //nolint:tagliatelle // the agent's slog key, snake_case by sloglint
 }
 
-func runLog(ctx context.Context, args []string, stdout io.Writer) error {
+func runLog(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	loc, err := resolve()
 	if err != nil {
 		return err
 	}
 
-	set := flagSet("log", stdout)
+	set := flagSet("log", stderr)
 	auditPath := set.String("audit", loc.audit, "the audit log file")
 	follow := set.Bool("follow", false, "keep reading as the agent writes")
 	asJSON := set.Bool("json", false, "print the records as the agent wrote them")

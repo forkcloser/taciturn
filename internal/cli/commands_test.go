@@ -183,6 +183,39 @@ func TestKeyCommandsTakeTheFingerprint(t *testing.T) {
 	}
 }
 
+// A flag a command does not have is a usage error: exit 2, the flag
+// package's message and the command's flags on stderr, nothing on stdout,
+// which is the command's output.
+func TestAWrongFlagIsToldOnStderr(t *testing.T) {
+	t.Parallel()
+
+	for _, command := range [][]string{
+		{"agent"},
+		{"install"},
+		{"uninstall"},
+		{"status"},
+		{"doctor"},
+		{"log"},
+		{"key", "list"},
+		{"key", "import"},
+		{"key", "create", "bot"},
+		{"key", "show", "bot"},
+		{"key", "allow", "bot"},
+		{"key", "disallow", "bot"},
+		{"key", "peers", "bot"},
+		{"key", "sshsig", "bot"},
+		{"key", "delete", "bot"},
+		{"key", "rotate", "bot"},
+		{"key", "retire", "bot"},
+		{"key", "signers", "bot"},
+	} {
+		code, out, errOut := run(t, append(command, "-bogus")...)
+		if code != 2 || out != "" || !strings.Contains(errOut, "flag provided but not defined: -bogus") {
+			t.Fatalf("%v -bogus: exit %d, stdout %q, stderr %q", command, code, out, errOut)
+		}
+	}
+}
+
 // shortDir is a temporary directory short enough for a socket path.
 func shortDir(t *testing.T) string {
 	t.Helper()

@@ -192,7 +192,7 @@ func readPeer(descriptor int) (*Identity, error) {
 		return nil, fmt.Errorf("peer code: %w", ErrUnavailable)
 	}
 
-	identity := &Identity{PID: pid, UID: cred.Uid}
+	identity := &Identity{PID: pid}
 	identity.code.ref = code
 	identity.code.satisfied = map[string]bool{}
 

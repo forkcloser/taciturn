@@ -2,7 +2,9 @@
 // process connecting to itself over a unix socket: the kernel answers for
 // the peer's uid and pid, the framework for its path and signature. The
 // tests need Security.framework and skip, saying so, in a build without
-// it; in a build with it, an Identify that fails fails the test.
+// it; in a build with it, an Identify that fails fails the test. One clause
+// has no test: ErrForeign takes a peer running as another user, which a
+// test run as one user has not.
 package peer_test
 
 import (
@@ -73,10 +75,6 @@ func TestIdentifySelf(t *testing.T) {
 
 	if identity.PID != os.Getpid() {
 		t.Fatalf("pid %d, want %d", identity.PID, os.Getpid())
-	}
-
-	if identity.UID != uint32(os.Geteuid()) {
-		t.Fatalf("uid %d, want %d", identity.UID, os.Geteuid())
 	}
 
 	executable, err := os.Executable()

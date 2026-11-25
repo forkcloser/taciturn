@@ -1,7 +1,7 @@
 // Package peer says who is on the other end of a unix socket connection:
-// the process's uid and pid from the socket's peer credentials, and, from
-// its audit token, the executable path and code signature the kernel
-// vouches for, which no process can forge and no pid reuse can confuse.
+// the process's pid from the socket's peer credentials, and, from its audit
+// token, the executable path and code signature the kernel vouches for,
+// which no process can forge and no pid reuse can confuse.
 //
 // Identify answers for the connection's immediate peer, the process that
 // called connect: ssh, ssh-keygen, or something else. The chain of parents

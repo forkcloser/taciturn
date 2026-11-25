@@ -40,7 +40,7 @@ func TestNameBound(t *testing.T) {
 		}
 	}
 
-	for _, first := range []string{".hidden", "-flag"} {
+	for _, first := range []string{".hidden", "-flag", ".", "-"} {
 		if err := keystore.ValidateName(first); !errors.Is(err, keystore.ErrInvalid) {
 			t.Fatalf("%q: %v", first, err)
 		}

@@ -457,9 +457,46 @@ func TestRefusesBadArguments(t *testing.T) {
 		t.Fatalf("empty blob: %v", err)
 	}
 
-	_, err := enclave.Generate(enclave.Class(0))
-	if !errors.Is(err, enclave.ErrInvalid) && !errors.Is(err, enclave.ErrUnavailable) {
-		t.Fatalf("class 0: %v", err)
+	// A class is one of the two, checked before the enclave is asked: the
+	// answer is ErrInvalid with or without an enclave.
+	for _, class := range []enclave.Class{0, enclave.ClassWhenUnlocked + 1, -1} {
+		if _, err := enclave.Generate(class); !errors.Is(err, enclave.ErrInvalid) {
+			t.Fatalf("class %d: %v", class, err)
+		}
+	}
+
+	// And each of the two is a class: what stops it here, if anything, is
+	// the enclave, not the check.
+	for _, class := range []enclave.Class{enclave.ClassAfterFirstUnlock, enclave.ClassWhenUnlocked} {
+		key, err := enclave.Generate(class)
+		if errors.Is(err, enclave.ErrInvalid) {
+			t.Fatalf("class %d: %v", class, err)
+		}
+
+		if err == nil {
+			key.Close()
+		}
+	}
+
+	// The label's own edges: MaxLabel bytes, a space and a rune above DEL
+	// are a label, which the keychain then does not hold or this process
+	// cannot ask for; a control character, 0x1f the last of them and DEL,
+	// is not.
+	for label, valid := range map[string]bool{
+		strings.Repeat("x", enclave.MaxLabel): true,
+		"a b":                                 true,
+		"a\u0080b":                            true,
+		"a\x1fb":                              false,
+		"a\x7fb":                              false,
+	} {
+		_, err := enclave.Load(label, point)
+		if errors.Is(err, enclave.ErrInvalid) == valid || err == nil {
+			t.Fatalf("load with label %q: %v", label, err)
+		}
+
+		if err = enclave.ValidateLabel(label); (err == nil) != valid {
+			t.Fatalf("label %q: %v", label, err)
+		}
 	}
 }
 

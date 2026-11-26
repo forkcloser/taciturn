@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/forkcloser/taciturn/internal/enclave"
+	"github.com/forkcloser/taciturn/internal/mallocstat"
 )
 
 func requireEnclave(t *testing.T) {
@@ -218,6 +219,96 @@ func TestStoreLoadDelete(t *testing.T) {
 
 	if err := enclave.Delete(name); !errors.Is(err, enclave.ErrNotFound) {
 		t.Fatalf("delete twice: %v", err)
+	}
+}
+
+// The agent loads a key for every signature and closes it after: a load, a
+// signature and a close leave nothing on the C heap, where the framework
+// keeps what it hands out for a key. The bytes in use there are read over
+// windows of a thousand rounds, as the agent's own test reads them
+// (internal/agent, TestConnectionsLeaveNothingBehind): a window that leaves
+// fewer than the allocator's smallest block a round ends the test, one that
+// leaves four times that fails it, and three over the bound fail it.
+//
+// Why windows, and why two thousand rounds first: on macOS 27.0.1 the
+// framework's own bytes rose by 137,392 over the first thousand rounds, by
+// 21,824 over the second and 5,456 over the third, and from there moved in
+// steps of 5,456 bytes, up or down, none to two a thousand rounds. A leak
+// leaves as much every window; that does not.
+//
+// What that holds: one smallest block kept a round fails the test where the
+// steps are still or rise. A step down in a window hides as much of a leak
+// in that window, which then ends the test: what fails it whatever one or
+// two steps do is two smallest blocks, 32 bytes, a round.
+func TestLoadSignCloseLeavesNothingBehind(t *testing.T) { //nolint:paralleltest // it counts the process's own bytes
+	requireKeychain(t)
+
+	const (
+		warmUp  = 2000
+		rounds  = 1000
+		windows = 3
+		// The allocator's quantum, its smallest block.
+		smallest = 16
+		// A window that leaves this much a round is not the framework settling.
+		plain = 4 * smallest
+	)
+
+	name := label(t)
+	key := generate(t)
+	public := key.Public()
+
+	if err := key.Store(name); err != nil {
+		t.Fatalf("store: %v", err)
+	}
+
+	key.Close()
+
+	round := func() {
+		loaded, err := enclave.Load(name, public)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+
+		if _, _, err = loaded.Sign([]byte("one more signature")); err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+
+		loaded.Close()
+	}
+
+	inUse := func() uint64 {
+		now, counted := mallocstat.Bytes()
+		if !counted {
+			t.Fatal("the enclave answers in a build that cannot ask the C allocator")
+		}
+
+		return now
+	}
+
+	for range warmUp {
+		round()
+	}
+
+	before := inUse()
+
+	for window := 1; ; window++ {
+		for range rounds {
+			round()
+		}
+
+		after := inUse()
+
+		t.Logf("window %d: %d bytes in use before, %d after", window, before, after)
+
+		switch {
+		case after < before+rounds*smallest:
+			return
+		case after >= before+rounds*plain, window == windows:
+			t.Fatalf("%d rounds of load, sign and close left bytes on the C heap, window %d: %d before, %d after",
+				rounds, window, before, after)
+		}
+
+		before = after
 	}
 }
 

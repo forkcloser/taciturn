@@ -24,7 +24,7 @@ import (
 	"github.com/forkcloser/taciturn/internal/protocol"
 )
 
-// The design's local-sshd leg, hardware lane: forkcloser/openssh's sshd on
+// The design's local-sshd leg, hardware lane: packcloser/openssh's sshd on
 // a loopback port with a host key of this test's making, and its ssh as the
 // one real client that binds the session, asks for the host-bound
 // user-authentication signature, and forwards the agent. The sandbox

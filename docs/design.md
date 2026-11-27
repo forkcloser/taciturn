@@ -58,7 +58,7 @@ its operator is a human, from a shell.
 **F1. The Secure Enclave signs ECDSA P-256 and nothing else usable here.** No ed25519, no
 RSA. Every taciturn key is `ecdsa-sha2-nistp256`.
 
-**F2. The sessions' ssh is forkcloser/openssh.** It is built with P-256 since v10.6.1.2
+**F2. The sessions' ssh is packcloser/openssh.** It is built with P-256 since v10.6.1.2
 and signed with the team's Developer ID since v10.6.1.6; its shipped configuration accepts
 no ECDSA form, so a client that uses a taciturn key names
 `PubkeyAcceptedAlgorithms ecdsa-sha2-nistp256` itself.
@@ -434,7 +434,7 @@ fuzz target where bytes are decoded; black-box, through the package's own surfac
   test binaries of the packages `hack/test-hardware.sh` names, wraps each in a bundle
   signed with the Apple Development identity and a development profile, and runs it. It
   holds what needs the enclave and the entitlement: make, store, load in another process,
-  sign and verify, the import of F17, and the agent end to end, with forkcloser/openssh's
+  sign and verify, the import of F17, and the agent end to end, with packcloser/openssh's
   `sshd` on the loopback and its `ssh` pinned to the agent's key: a named destination
   logs in on a host-bound signature, an unnamed host key gets an empty listing, and a
   forwarded agent sees nothing. Elsewhere those tests skip and say why.
@@ -466,7 +466,7 @@ Each was put with its alternatives; the answer and its reason stand here.
 6. **The names**: `taciturn`, `org.forkcloser.taciturn`,
    `~/Library/Application Support/taciturn/{keys,agent.sock}`,
    `~/Library/Logs/org.forkcloser.taciturn/`.
-7. **forkcloser/openssh is the bot's only ssh**, with P-256 (F2).
+7. **packcloser/openssh is the bot's only ssh**, with P-256 (F2).
 9. **GitHub key registration stays manual**: no token of the bot at rest anywhere.
 10. **Rotation: taciturn local, the fleet's files elsewhere**, on the allowed-signers
     validity window, never a deletion.
@@ -486,7 +486,7 @@ Each was put with its alternatives; the answer and its reason stand here.
     machine.
 16. **The access group is read from the entitlement at run time**; no team identifier is
     in the source.
-17. **Peers are named by requirement once the client is signed**: forkcloser/openssh's
+17. **Peers are named by requirement once the client is signed**: packcloser/openssh's
     binaries carry a Developer ID signature since v10.6.1.6, and a key's path entries are
     the operator's to replace.
 

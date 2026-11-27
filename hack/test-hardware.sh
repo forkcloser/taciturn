@@ -23,7 +23,7 @@ export APPLE_SIGN_IDENTITY="${APPLE_SIGN_IDENTITY:-Apple Development}"
 # No timestamp server for a test bundle: offline, and nothing verifies it later.
 export TACITURN_SIGN_TIMESTAMP="${TACITURN_SIGN_TIMESTAMP:-none}"
 
-# The local-sshd leg runs forkcloser/openssh's sshd and ssh from one install
+# The local-sshd leg runs packcloser/openssh's sshd and ssh from one install
 # directory; hermetic knows where the pinned fork's ssh lives.
 if [ -z "${TACITURN_OPENSSH:-}" ] && command -v hermetic > /dev/null 2>&1; then
   fork_ssh="$(hermetic which ssh 2> /dev/null || true)"
@@ -33,7 +33,7 @@ if [ -z "${TACITURN_OPENSSH:-}" ] && command -v hermetic > /dev/null 2>&1; then
   fi
 fi
 if [ -z "${TACITURN_OPENSSH:-}" ]; then
-  echo "test-hardware: TACITURN_OPENSSH is unset and hermetic has no forkcloser/openssh; the local-sshd leg will skip" >&2
+  echo "test-hardware: TACITURN_OPENSSH is unset and hermetic has no packcloser/openssh; the local-sshd leg will skip" >&2
 fi
 
 if [ ! -f "$APPLE_PROVISIONING_PROFILE_PATH" ]; then
